@@ -1,93 +1,156 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { TicketService } from '@/lib/services/tickets'
-import { ApiResponse, CreateTicketData } from '@/types'
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { uploadToSupabase } from '@/lib/supabase';
 
-// POST /api/tickets - создание нового тикета
-export async function POST(request: NextRequest) {
+export const dynamic = 'force-dynamic';
+
+export async function POST(req: NextRequest) {
     try {
-        const body = await request.json()
-        const { clientEmail, images } = body as CreateTicketData
+        console.log('🚀 Starting ticket creation with Supabase...');
 
-        // Валидация данных
-        if (!clientEmail || !images || images.length === 0) {
-            return NextResponse.json<ApiResponse>({
-                success: false,
-                error: 'Необходимо указать email и загрузить минимум одно изображение'
-            }, { status: 400 })
+        // Проверяем переменные окружения
+        console.log('🔗 Supabase URL:', process.env.NEXT_PUBLIC_SUPABASE_URL);
+        console.log('🔑 Service key exists:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+        const formData = await req.formData();
+        const email = formData.get('email') as string;
+
+        if (!email) {
+            return NextResponse.json(
+                { error: 'Email is required' },
+                { status: 400 }
+            );
         }
 
-        // Проверка email формата
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-        if (!emailRegex.test(clientEmail)) {
-            return NextResponse.json<ApiResponse>({
-                success: false,
-                error: 'Некорректный формат email'
-            }, { status: 400 })
+        // Получаем все файлы
+        const files: File[] = [];
+        for (const [key, value] of formData.entries()) {
+            if (value instanceof File && key.startsWith('file_')) {
+                files.push(value);
+                console.log(`📷 Found file: ${value.name} (${value.size} bytes)`);
+            }
         }
 
-        // Создание тикета
-        const ticket = await TicketService.create({
-            clientEmail,
-            images
-        })
+        if (files.length === 0) {
+            return NextResponse.json(
+                { error: 'At least one image is required' },
+                { status: 400 }
+            );
+        }
 
-        return NextResponse.json<ApiResponse>({
+        console.log(`📧 Email: ${email}`);
+        console.log(`📷 Files count: ${files.length}`);
+
+        // Создаем тикет в БД
+        const ticket = await prisma.ticket.create({
+            data: {
+                clientEmail: email,
+                status: 'PENDING',
+            },
+        });
+
+        console.log(`🎫 Created ticket: ${ticket.id}`);
+
+        // Загружаем файлы в Supabase Storage
+        const imagePromises = files.map(async (file, index) => {
+            try {
+                const buffer = Buffer.from(await file.arrayBuffer());
+                const extension = file.name.split('.').pop() || 'jpg';
+                const fileName = `${ticket.id}_image_${index + 1}.${extension}`;
+
+                console.log(`📤 Uploading file ${index + 1}/${files.length}: ${fileName}`);
+
+                // Загружаем в Supabase
+                const { url, path } = await uploadToSupabase(buffer, fileName);
+
+                console.log(`✅ File uploaded successfully: ${url}`);
+
+                // Сохраняем в БД
+                const image = await prisma.image.create({
+                    data: {
+                        ticketId: ticket.id,
+                        url: url,
+                        publicId: path, // Сохраняем path для возможности удаления
+                        type: 'INITIAL',
+                    },
+                });
+
+                console.log(`💾 Image saved to DB: ${image.id}`);
+                return image;
+
+            } catch (uploadError) {
+                console.error(`❌ Error uploading file ${index + 1}:`, uploadError);
+                throw uploadError;
+            }
+        });
+
+        // Ждем загрузки всех файлов
+        const images = await Promise.all(imagePromises);
+
+        // Получаем полный тикет с изображениями
+        const fullTicket = await prisma.ticket.findUnique({
+            where: { id: ticket.id },
+            include: {
+                images: true,
+            },
+        });
+
+        console.log(`🎉 Ticket created successfully: ${ticket.id}`);
+        console.log(`📊 Total images uploaded: ${images.length}`);
+
+        return NextResponse.json({
             success: true,
-            data: ticket,
-            message: 'Тикет успешно создан. Мы отправим результат проверки на указанный email.'
-        }, { status: 201 })
+            ticket: fullTicket,
+            message: `Ticket created successfully with ${images.length} images`,
+        });
 
     } catch (error) {
-        console.error('Ошибка создания тикета:', error)
+        console.error('❌ Error creating ticket:', error);
 
-        return NextResponse.json<ApiResponse>({
-            success: false,
-            error: 'Внутренняя ошибка сервера'
-        }, { status: 500 })
+        // Более детальная ошибка для отладки
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack : undefined;
+
+        console.error('Error details:', { errorMessage, errorStack });
+
+        return NextResponse.json(
+            {
+                error: 'Failed to create ticket',
+                details: process.env.NODE_ENV === 'development' ? errorMessage : undefined
+            },
+            { status: 500 }
+        );
     }
 }
 
-// GET /api/tickets - получение списка тикетов (для админки)
-export async function GET(request: NextRequest) {
+export async function GET() {
     try {
-        const { searchParams } = new URL(request.url)
+        const tickets = await prisma.ticket.findMany({
+            include: {
+                images: true,
+                _count: {
+                    select: {
+                        images: true,
+                        requests: true,
+                    },
+                },
+            },
+            orderBy: {
+                createdAt: 'desc',
+            },
+        });
 
-        // Параметры фильтрации
-        const status = searchParams.get('status') || undefined
-        const clientEmail = searchParams.get('email') || undefined
-        const limit = parseInt(searchParams.get('limit') || '10')
-        const offset = parseInt(searchParams.get('offset') || '0')
-
-        // Получение тикетов с фильтрацией
-        const tickets = await TicketService.findMany({
-            status,
-            clientEmail,
-            limit,
-            offset
-        })
-
-        // Получение общей статистики
-        const stats = await TicketService.getStats()
-
-        return NextResponse.json<ApiResponse>({
+        return NextResponse.json({
             success: true,
-            data: {
-                tickets,
-                stats,
-                pagination: {
-                    limit,
-                    offset,
-                    total: stats.total
-                }
-            }
-        })
+            tickets,
+        });
 
     } catch (error) {
-        console.error('Ошибка получения тикетов:', error)
+        console.error('❌ Error fetching tickets:', error);
 
-        return NextResponse.json<ApiResponse>({
-            success: false,
-            error: 'Ошибка получения данных'
-        }, { status: 500 })
+        return NextResponse.json(
+            { error: 'Failed to fetch tickets' },
+            { status: 500 }
+        );
     }
 }
