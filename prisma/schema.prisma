@@ -1,0 +1,107 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  role      Role     @default(CLIENT)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tickets Ticket[]
+
+  @@map("users")
+}
+
+model Ticket {
+  id          String   @id @default(cuid())
+  status      Status   @default(PENDING)
+  result      Result?
+  comment     String?
+  clientEmail String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Связи
+  images       Image[]
+  requests     PhotoRequest[]
+  certificate  Certificate?
+  user         User?          @relation(fields: [userId], references: [id])
+  userId       String?
+
+  @@map("tickets")
+}
+
+model Image {
+  id         String    @id @default(cuid())
+  ticketId   String
+  url        String
+  publicId   String    // Cloudinary public_id для удаления
+  type       ImageType @default(INITIAL)
+  uploadedAt DateTime  @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@map("images")
+}
+
+model PhotoRequest {
+  id          String        @id @default(cuid())
+  ticketId    String
+  description String
+  status      RequestStatus @default(PENDING)
+  createdAt   DateTime      @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@map("photo_requests")
+}
+
+model Certificate {
+  id        String   @id @default(cuid())
+  ticketId  String   @unique
+  pdfUrl    String
+  qrCode    String   @unique
+  issuedAt  DateTime @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@map("certificates")
+}
+
+// Enums
+enum Status {
+  PENDING          // Ожидает проверки
+  NEEDS_MORE_PHOTOS // Нужны дополнительные фото
+  IN_REVIEW        // На проверке у эксперта
+  COMPLETED        // Завершено
+}
+
+enum Result {
+  AUTHENTIC // Подлинная
+  FAKE      // Подделка
+}
+
+enum ImageType {
+  INITIAL    // Изначальные фото при создании тикета
+  ADDITIONAL // Дополнительные фото по запросу
+}
+
+enum RequestStatus {
+  PENDING   // Ожидает выполнения
+  FULFILLED // Выполнен
+}
+
+enum Role {
+  CLIENT  // Клиент
+  MANAGER // Менеджер/эксперт
+}
