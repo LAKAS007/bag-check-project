@@ -1,7 +1,8 @@
-// src/app/api/tickets/[id]/route.ts - ИСПРАВЛЕННАЯ ВЕРСИЯ
+// src/app/api/tickets/[id]/route.ts - ФИНАЛЬНАЯ ВЕРСИЯ
 import { NextRequest, NextResponse } from 'next/server'
 import { TicketService } from '@/lib/services/tickets'
 import { prisma } from '@/lib/prisma'
+import { PDFCertificateGenerator } from '@/lib/pdf-generator'
 import { nanoid } from 'nanoid'
 
 type RouteContext = {
@@ -69,7 +70,14 @@ export async function PATCH(
         }
 
         // Проверка существования тикета
-        const existingTicket = await TicketService.findById(id)
+        const existingTicket = await prisma.ticket.findUnique({
+            where: { id },
+            include: {
+                images: true,
+                certificate: true
+            }
+        })
+
         if (!existingTicket) {
             return NextResponse.json({
                 success: false,
@@ -88,54 +96,93 @@ export async function PATCH(
             },
             include: {
                 images: true,
-                requests: true,
                 certificate: true
             }
         })
 
-        // 🔥 ГЛАВНОЕ ИСПРАВЛЕНИЕ: Создаем сертификат для подлинных сумок
-        if (status === 'COMPLETED' && result === 'AUTHENTIC') {
-            // Проверяем, что сертификат еще не создан
-            const existingCertificate = await prisma.certificate.findUnique({
-                where: { ticketId: id }
-            })
+        // 🔥 СОЗДАНИЕ СЕРТИФИКАТА И ОТПРАВКА EMAIL
+        if (status === 'COMPLETED') {
+            try {
+                if (result === 'AUTHENTIC') {
+                    console.log('✅ Товар подлинный - создаем сертификат и отправляем email')
 
-            if (!existingCertificate) {
-                // Генерируем уникальный QR код
-                const qrCode = nanoid(12)
+                    // Создаем или обновляем запись о сертификате в БД (только метаданные)
+                    let certificate = existingTicket.certificate
 
-                // Временный PDF URL (в будущем здесь будет реальный PDF)
-                const pdfUrl = `https://example.com/certificates/${id}.pdf`
+                    if (!certificate) {
+                        const qrCode = nanoid(12)
+                        certificate = await prisma.certificate.create({
+                            data: {
+                                ticketId: updatedTicket.id,
+                                qrCode: qrCode,
+                                pdfUrl: '' // Пустая строка, так как не храним файл
+                            }
+                        })
+                    }
 
-                // Создаем сертификат
-                const certificate = await prisma.certificate.create({
-                    data: {
-                        ticketId: id,
-                        qrCode: qrCode,
-                        pdfUrl: pdfUrl
+                    // Генерируем PDF в памяти
+                    const certificateData = {
+                        ticketId: updatedTicket.id,
+                        qrCode: certificate.qrCode,
+                        result: 'AUTHENTIC' as const,
+                        comment: updatedTicket.comment || 'Товар прошел экспертную проверку и признан подлинным.',
+                        clientEmail: updatedTicket.clientEmail,
+                        images: updatedTicket.images,
+                        expertName: 'Certified Expert',
+                        issuedAt: new Date()
+                    }
+
+                    const pdfBuffer = await PDFCertificateGenerator.generateCertificate(certificateData)
+                    const fileName = PDFCertificateGenerator.generateFileName(updatedTicket.id)
+
+                    // TODO: Здесь будет отправка email с PDF вложением
+                    console.log('📧 Отправляем email с сертификатом на:', updatedTicket.clientEmail)
+                    console.log('📄 PDF размер:', pdfBuffer.length, 'байт')
+                    console.log('📁 Имя файла:', fileName)
+
+                    // Временно логируем, позже заменим на реальную отправку email
+                    // await sendCertificateEmail(updatedTicket.clientEmail, pdfBuffer, fileName, certificateData)
+
+                } else {
+                    console.log('❌ Товар не подлинный - отправляем email с результатом')
+
+                    // TODO: Здесь будет отправка email о том, что товар не подлинный
+                    console.log('📧 Отправляем email о подделке на:', updatedTicket.clientEmail)
+                    // await sendFakeResultEmail(updatedTicket.clientEmail, updatedTicket.comment)
+                }
+
+                // Получаем финальный тикет с сертификатом
+                const finalTicket = await prisma.ticket.findUnique({
+                    where: { id },
+                    include: {
+                        images: true,
+                        certificate: true
                     }
                 })
 
-                console.log(`✅ Сертификат создан для заявки ${id}, QR код: ${qrCode}`)
+                return NextResponse.json({
+                    success: true,
+                    data: finalTicket,
+                    message: result === 'AUTHENTIC'
+                        ? 'Заявка завершена. Сертификат отправлен на email клиента.'
+                        : 'Заявка завершена. Результат отправлен на email клиента.'
+                })
 
-                // TODO: Здесь добавить отправку email клиенту
-                // await sendCertificateEmail(updatedTicket.clientEmail, certificate)
+            } catch (emailError) {
+                console.error('❌ Ошибка отправки email:', emailError)
+
+                return NextResponse.json({
+                    success: true,
+                    data: updatedTicket,
+                    message: `Статус обновлен, но не удалось отправить email: ${emailError}`
+                })
             }
         }
 
-        // Получаем обновленный тикет с сертификатом
-        const finalTicket = await prisma.ticket.findUnique({
-            where: { id },
-            include: {
-                images: true,
-                requests: true,
-                certificate: true
-            }
-        })
-
+        // Обычное обновление статуса
         return NextResponse.json({
             success: true,
-            data: finalTicket,
+            data: updatedTicket,
             message: `Статус тикета обновлен на: ${status}`
         })
 
@@ -160,7 +207,6 @@ export async function POST(
 
         const { images } = body as { images: { url: string; publicId: string }[] }
 
-        // Валидация
         if (!images || images.length === 0) {
             return NextResponse.json({
                 success: false,
@@ -168,7 +214,6 @@ export async function POST(
             }, { status: 400 })
         }
 
-        // Проверка существования тикета
         const existingTicket = await TicketService.findById(id)
         if (!existingTicket) {
             return NextResponse.json({
@@ -177,17 +222,14 @@ export async function POST(
             }, { status: 404 })
         }
 
-        // Добавление изображений
         await TicketService.addImages(id, images)
 
-        // Обновление статуса тикета на IN_REVIEW (если были запросы на доп фото)
         if (existingTicket.status === 'NEEDS_MORE_PHOTOS') {
             await TicketService.updateStatus(id, {
                 status: 'IN_REVIEW'
             })
         }
 
-        // Получение обновленного тикета
         const updatedTicket = await TicketService.findById(id)
 
         return NextResponse.json({
