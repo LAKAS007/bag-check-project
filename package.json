@@ -25,6 +25,7 @@
     "formidable": "^3.5.4",
     "lucide-react": "^0.526.0",
     "multer": "^2.0.2",
+    "nanoid": "^5.1.5",
     "next": "15.4.4",
     "nodemailer": "^7.0.5",
     "pdfkit": "^0.17.1",
