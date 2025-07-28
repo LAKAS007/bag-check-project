@@ -1,356 +1,340 @@
-// src/lib/pdf-generator.ts - УПРОЩЕННАЯ ВЕРСИЯ
-import PDFDocument from 'pdfkit'
+// src/lib/pdf-generator.ts
+// Используем только встроенные возможности Node.js
 import QRCode from 'qrcode'
 
-interface CertificateData {
+export interface CertificateData {
     ticketId: string
-    qrCode: string
-    result: 'AUTHENTIC' | 'FAKE'
-    comment: string
     clientEmail: string
-    images: Array<{
-        id: string
-        url: string
-        type: 'INITIAL' | 'ADDITIONAL'
-    }>
+    result: 'AUTHENTIC' | 'FAKE'
+    comment?: string
+    brandName?: string
+    itemType?: string
+    checkDate: Date
     expertName?: string
-    issuedAt: Date
+    qrCode: string
 }
 
 export class PDFCertificateGenerator {
-
-    // Основная функция генерации сертификата (возвращает только Buffer)
     static async generateCertificate(data: CertificateData): Promise<Buffer> {
         try {
             console.log('🔄 Генерируем PDF сертификат для заявки:', data.ticketId)
 
-            const doc = new PDFDocument({
-                size: 'A4',
-                margins: { top: 40, bottom: 40, left: 40, right: 40 },
-                info: {
-                    Title: `Сертификат подлинности BagCheck - ${data.ticketId}`,
-                    Author: 'BagCheck',
-                    Subject: 'Сертификат подлинности дизайнерской сумки',
-                    CreationDate: new Date()
-                }
-            })
-
-            // Собираем PDF в буфер
-            const chunks: Buffer[] = []
-            doc.on('data', chunk => chunks.push(chunk))
-
-            const pdfPromise = new Promise<Buffer>((resolve) => {
-                doc.on('end', () => {
-                    const buffer = Buffer.concat(chunks)
-                    resolve(buffer)
+            // Генерируем QR код
+            let qrCodeImage = ''
+            try {
+                const verifyUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://bagcheck.vercel.app'}/verify/${data.qrCode}`
+                qrCodeImage = await QRCode.toDataURL(verifyUrl, {
+                    width: 200,
+                    margin: 1,
+                    color: { dark: '#000000', light: '#FFFFFF' }
                 })
-            })
+            } catch (error) {
+                console.warn('⚠️ Не удалось сгенерировать QR код:', error)
+            }
 
-            // Генерируем содержимое сертификата
-            await this.generateCertificateContent(doc, data)
+            // Создаем HTML контент
+            const htmlContent = this.generateHTML(data, qrCodeImage)
 
-            // Завершаем документ
-            doc.end()
+            // Возвращаем HTML как "PDF" (временное решение для тестирования)
+            // В реальности здесь будет использоваться Puppeteer или другая библиотека
+            const htmlBuffer = Buffer.from(htmlContent, 'utf-8')
 
-            // Ждем завершения генерации
-            const buffer = await pdfPromise
+            console.log('✅ HTML сертификат сгенерирован, размер:', htmlBuffer.length, 'байт')
 
-            console.log('✅ PDF сертификат успешно создан, размер:', buffer.length, 'байт')
+            return htmlBuffer
 
-            return buffer
         } catch (error) {
-            console.error('❌ Ошибка генерации PDF:', error)
-            throw new Error('Не удалось создать PDF сертификат')
+            console.error('❌ Ошибка генерации сертификата:', error)
+            throw new Error('Не удалось создать сертификат')
         }
     }
 
-    // Генерация содержимого сертификата
-    private static async generateCertificateContent(doc: PDFKit.PDFDocument, data: CertificateData) {
-        const pageWidth = doc.page.width
-        const pageHeight = doc.page.height
-        const margin = 40
+    private static generateHTML(data: CertificateData, qrCodeImage: string): string {
+        const resultColor = data.result === 'AUTHENTIC' ? '#059669' : '#dc2626'
+        const resultText = data.result === 'AUTHENTIC' ? '✓ ПОДЛИННАЯ' : '✗ ПОДДЕЛКА'
 
-        // Цвета
-        const primaryColor = '#1e40af' // blue-700
-        const secondaryColor = '#64748b' // slate-500
-        const successColor = '#16a34a' // green-600
-        const textColor = '#1e293b' // slate-800
-
-        // === HEADER ===
-        await this.drawHeader(doc, pageWidth, margin, primaryColor)
-
-        // === СТАТУС И ЗАГОЛОВОК ===
-        const currentY = await this.drawStatusSection(doc, data, pageWidth, margin, 140, primaryColor, successColor)
-
-        // === QR КОД ===
-        const qrY = await this.drawQRCode(doc, data.qrCode, pageWidth, margin, currentY + 30)
-
-        // === ИНФОРМАЦИЯ О ПРОВЕРКЕ ===
-        const infoY = await this.drawTicketInfo(doc, data, margin, qrY + 20, secondaryColor, textColor)
-
-        // === ЭКСПЕРТНОЕ ЗАКЛЮЧЕНИЕ ===
-        const commentY = await this.drawExpertComment(doc, data.comment, margin, pageWidth, infoY + 30, textColor)
-
-        // === ФОТОГРАФИИ ===
-        if (data.images.length > 0) {
-            await this.drawImages(doc, data.images, margin, pageWidth, commentY + 30)
-        }
-
-        // === FOOTER ===
-        await this.drawFooter(doc, pageWidth, pageHeight, margin, secondaryColor)
-    }
-
-    // Рисуем заголовок
-    private static async drawHeader(doc: PDFKit.PDFDocument, pageWidth: number, margin: number, primaryColor: string) {
-        // Фон заголовка
-        doc.rect(0, 0, pageWidth, 100)
-            .fill(primaryColor)
-
-        // Логотип (текстовый)
-        doc.fontSize(28)
-            .fillColor('white')
-            .font('Helvetica-Bold')
-            .text('🛡️ BagCheck', margin, 30)
-
-        // Подзаголовок
-        doc.fontSize(14)
-            .fillColor('white')
-            .font('Helvetica')
-            .text('Профессиональная аутентификация дизайнерских сумок', margin, 65)
-    }
-
-    // Рисуем секцию статуса
-    private static async drawStatusSection(
-        doc: PDFKit.PDFDocument,
-        data: CertificateData,
-        pageWidth: number,
-        margin: number,
-        y: number,
-        primaryColor: string,
-        successColor: string
-    ): Promise<number> {
-
-        // Заголовок сертификата
-        doc.fontSize(24)
-            .fillColor(primaryColor)
-            .font('Helvetica-Bold')
-            .text('СЕРТИФИКАТ ПОДЛИННОСТИ', margin, y, { align: 'center' })
-
-        // Статус результата
-        const statusY = y + 40
-        const statusText = '✓ ПОДЛИННЫЙ ТОВАР'
-
-        // Фон для статуса
-        const textWidth = doc.widthOfString(statusText, { fontSize: 18, font: 'Helvetica-Bold' })
-        const bgX = (pageWidth - textWidth - 40) / 2
-
-        doc.rect(bgX, statusY - 5, textWidth + 40, 35)
-            .fill(successColor)
-            .fillColor('white')
-            .fontSize(18)
-            .font('Helvetica-Bold')
-            .text(statusText, bgX + 20, statusY + 5)
-
-        return statusY + 50
-    }
-
-    // Рисуем QR код
-    private static async drawQRCode(
-        doc: PDFKit.PDFDocument,
-        qrCode: string,
-        pageWidth: number,
-        margin: number,
-        y: number
-    ): Promise<number> {
-
-        try {
-            // Генерируем QR код как изображение
-            const verifyUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://bagcheck.vercel.app'}/verify/${qrCode}`
-            const qrImageBuffer = await QRCode.toBuffer(verifyUrl, {
-                width: 120,
-                margin: 2,
-                color: {
-                    dark: '#000000',
-                    light: '#FFFFFF'
+        return `
+        <!DOCTYPE html>
+        <html lang="ru">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Сертификат подлинности - ${data.ticketId}</title>
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
                 }
-            })
-
-            // Размещаем QR код справа
-            const qrSize = 120
-            const qrX = pageWidth - margin - qrSize
-
-            doc.image(qrImageBuffer, qrX, y, { width: qrSize, height: qrSize })
-
-            // Текст рядом с QR кодом
-            doc.fontSize(12)
-                .fillColor('#64748b')
-                .font('Helvetica')
-                .text('Сканируйте QR-код\nдля верификации\nподлинности сертификата', margin, y + 20)
-
-            doc.fontSize(10)
-                .fillColor('#94a3b8')
-                .text(`Код: ${qrCode}`, margin, y + 80)
-
-            return y + qrSize + 20
-        } catch (error) {
-            console.error('Ошибка генерации QR кода:', error)
-            return y + 140
-        }
+                
+                body {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    color: #334155;
+                    line-height: 1.6;
+                    background: #ffffff;
+                    padding: 40px;
+                }
+                
+                .certificate {
+                    max-width: 800px;
+                    margin: 0 auto;
+                    background: white;
+                    border: 3px solid #1e40af;
+                    border-radius: 15px;
+                    padding: 40px;
+                    box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+                }
+                
+                .header {
+                    text-align: center;
+                    margin-bottom: 40px;
+                    padding-bottom: 20px;
+                    border-bottom: 2px solid #e2e8f0;
+                }
+                
+                .logo {
+                    font-size: 32px;
+                    color: #1e40af;
+                    font-weight: bold;
+                    margin-bottom: 10px;
+                }
+                
+                .company-name {
+                    font-size: 24px;
+                    color: #1e40af;
+                    font-weight: bold;
+                    margin-bottom: 8px;
+                }
+                
+                .company-subtitle {
+                    font-size: 14px;
+                    color: #64748b;
+                }
+                
+                .certificate-title {
+                    text-align: center;
+                    margin-bottom: 40px;
+                }
+                
+                .title-main {
+                    font-size: 36px;
+                    color: #1e40af;
+                    font-weight: bold;
+                    margin-bottom: 15px;
+                    letter-spacing: 2px;
+                }
+                
+                .certificate-number {
+                    font-size: 16px;
+                    color: #64748b;
+                    background: #f8fafc;
+                    padding: 10px 20px;
+                    border-radius: 25px;
+                    display: inline-block;
+                }
+                
+                .main-content {
+                    display: flex;
+                    gap: 40px;
+                    margin-bottom: 40px;
+                }
+                
+                .content-left {
+                    flex: 1;
+                }
+                
+                .qr-section {
+                    text-align: center;
+                    min-width: 120px;
+                }
+                
+                .result-section {
+                    text-align: center;
+                    margin-bottom: 40px;
+                    padding: 20px;
+                    background: ${data.result === 'AUTHENTIC' ? '#f0fdf4' : '#fef2f2'};
+                    border-radius: 12px;
+                    border: 2px solid ${resultColor};
+                }
+                
+                .result-text {
+                    font-size: 32px;
+                    font-weight: bold;
+                    color: ${resultColor};
+                }
+                
+                .details-section {
+                    background: #f8fafc;
+                    padding: 30px;
+                    border-radius: 12px;
+                    margin-bottom: 30px;
+                }
+                
+                .detail-row {
+                    display: flex;
+                    justify-content: space-between;
+                    margin-bottom: 15px;
+                    padding-bottom: 15px;
+                    border-bottom: 1px solid #e2e8f0;
+                }
+                
+                .detail-label {
+                    font-weight: 600;
+                    color: #64748b;
+                    min-width: 150px;
+                }
+                
+                .detail-value {
+                    color: #334155;
+                    font-weight: 500;
+                }
+                
+                .comment-section {
+                    background: #fffbeb;
+                    padding: 20px;
+                    border-radius: 12px;
+                    border-left: 4px solid #f59e0b;
+                }
+                
+                .comment-label {
+                    font-weight: 600;
+                    color: #92400e;
+                    margin-bottom: 10px;
+                }
+                
+                .comment-text {
+                    color: #451a03;
+                    line-height: 1.8;
+                }
+                
+                .qr-code {
+                    width: 100px;
+                    height: 100px;
+                    margin-bottom: 10px;
+                    border-radius: 8px;
+                }
+                
+                .qr-label {
+                    font-size: 12px;
+                    color: #64748b;
+                    font-weight: 500;
+                }
+                
+                .footer {
+                    text-align: center;
+                    padding-top: 30px;
+                    border-top: 2px solid #e2e8f0;
+                    color: #64748b;
+                    font-size: 12px;
+                }
+                
+                .generation-date {
+                    margin-top: 15px;
+                    font-size: 10px;
+                    color: #94a3b8;
+                }
+                
+                @media print {
+                    body { padding: 0; }
+                    .certificate { 
+                        box-shadow: none; 
+                        border: 2px solid #000;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="certificate">
+                <!-- Header -->
+                <div class="header">
+                    <div class="logo">🛡️</div>
+                    <div class="company-name">BagCheck</div>
+                    <div class="company-subtitle">Профессиональная аутентификация дизайнерских сумок</div>
+                </div>
+                
+                <!-- Certificate Title -->
+                <div class="certificate-title">
+                    <div class="title-main">СЕРТИФИКАТ ПОДЛИННОСТИ</div>
+                    <div class="certificate-number">Номер сертификата: ${data.ticketId}</div>
+                </div>
+                
+                <!-- Result -->
+                <div class="result-section">
+                    <div class="result-text">${resultText}</div>
+                </div>
+                
+                <!-- Main Content -->
+                <div class="main-content">
+                    <div class="content-left">
+                        <!-- Details -->
+                        <div class="details-section">
+                            <div class="detail-row">
+                                <div class="detail-label">Тип товара:</div>
+                                <div class="detail-value">${data.itemType || 'Дизайнерская сумка'}</div>
+                            </div>
+                            <div class="detail-row">
+                                <div class="detail-label">Бренд:</div>
+                                <div class="detail-value">${data.brandName || 'Не указан'}</div>
+                            </div>
+                            <div class="detail-row">
+                                <div class="detail-label">Email клиента:</div>
+                                <div class="detail-value">${data.clientEmail}</div>
+                            </div>
+                            <div class="detail-row">
+                                <div class="detail-label">Дата проверки:</div>
+                                <div class="detail-value">${this.formatDate(data.checkDate)}</div>
+                            </div>
+                            <div class="detail-row" style="border-bottom: none; margin-bottom: 0; padding-bottom: 0;">
+                                <div class="detail-label">Эксперт:</div>
+                                <div class="detail-value">${data.expertName || 'BagCheck Expert Team'}</div>
+                            </div>
+                        </div>
+                        
+                        <!-- Comment -->
+                        ${data.comment ? `
+                            <div class="comment-section">
+                                <div class="comment-label">Комментарий эксперта:</div>
+                                <div class="comment-text">${data.comment}</div>
+                            </div>
+                        ` : ''}
+                    </div>
+                    
+                    <!-- QR Code -->
+                    <div class="qr-section">
+                        ${qrCodeImage ? `
+                            <img src="${qrCodeImage}" alt="QR Code" class="qr-code">
+                        ` : `
+                            <div style="width: 100px; height: 100px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666; text-align: center; border-radius: 8px; margin-bottom: 10px;">
+                                QR код<br>${data.qrCode.slice(0, 8)}
+                            </div>
+                        `}
+                        <div class="qr-label">
+                            Сканируйте для<br>верификации
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Footer -->
+                <div class="footer">
+                    Этот сертификат выдан компанией BagCheck - сервисом профессиональной аутентификации.<br>
+                    Для верификации подлинности сертификата отсканируйте QR код или посетите наш сайт.
+                    <div class="generation-date">
+                        Сертификат сгенерирован: ${this.formatDate(new Date())}
+                    </div>
+                </div>
+            </div>
+        </body>
+        </html>
+        `
     }
 
-    // Рисуем информацию о заявке
-    private static async drawTicketInfo(
-        doc: PDFKit.PDFDocument,
-        data: CertificateData,
-        margin: number,
-        y: number,
-        secondaryColor: string,
-        textColor: string
-    ): Promise<number> {
-
-        const lineHeight = 20
-        let currentY = y
-
-        // Заголовок секции
-        doc.fontSize(14)
-            .fillColor(textColor)
-            .font('Helvetica-Bold')
-            .text('Информация о проверке:', margin, currentY)
-
-        currentY += 25
-
-        // Информация
-        const info = [
-            ['ID заявки:', data.ticketId],
-            ['Дата выдачи:', data.issuedAt.toLocaleDateString('ru-RU', {
-                day: '2-digit', month: 'long', year: 'numeric'
-            })],
-            ['Время выдачи:', data.issuedAt.toLocaleTimeString('ru-RU', {
-                hour: '2-digit', minute: '2-digit'
-            })],
-            ['Эксперт:', data.expertName || 'Certified Expert']
-        ]
-
-        doc.fontSize(11)
-            .font('Helvetica')
-
-        info.forEach(([label, value]) => {
-            doc.fillColor(secondaryColor)
-                .text(label, margin, currentY, { continued: true })
-                .fillColor(textColor)
-                .text(` ${value}`)
-            currentY += lineHeight
+    private static formatDate(date: Date): string {
+        return date.toLocaleDateString('ru-RU', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
         })
-
-        return currentY
-    }
-
-    // Рисуем экспертное заключение
-    private static async drawExpertComment(
-        doc: PDFKit.PDFDocument,
-        comment: string,
-        margin: number,
-        pageWidth: number,
-        y: number,
-        textColor: string
-    ): Promise<number> {
-
-        let currentY = y
-
-        // Заголовок
-        doc.fontSize(14)
-            .fillColor(textColor)
-            .font('Helvetica-Bold')
-            .text('Экспертное заключение:', margin, currentY)
-
-        currentY += 25
-
-        // Фон для комментария
-        const commentHeight = doc.heightOfString(comment, {
-            width: pageWidth - margin * 2 - 20,
-            fontSize: 11
-        }) + 20
-
-        doc.rect(margin - 10, currentY - 5, pageWidth - margin * 2 + 20, commentHeight)
-            .fill('#f8fafc') // slate-50
-            .stroke('#e2e8f0') // slate-200
-
-        // Текст комментария
-        doc.fontSize(11)
-            .fillColor(textColor)
-            .font('Helvetica')
-            .text(comment, margin, currentY + 10, {
-                width: pageWidth - margin * 2,
-                align: 'justify'
-            })
-
-        return currentY + commentHeight + 20
-    }
-
-    // Рисуем фотографии (список без загрузки изображений)
-    private static async drawImages(
-        doc: PDFKit.PDFDocument,
-        images: Array<{ id: string, url: string, type: string }>,
-        margin: number,
-        pageWidth: number,
-        y: number
-    ): Promise<number> {
-
-        let currentY = y
-
-        // Заголовок
-        doc.fontSize(14)
-            .fillColor('#1e293b')
-            .font('Helvetica-Bold')
-            .text(`Проверенные фотографии (${images.length}):`, margin, currentY)
-
-        currentY += 25
-
-        // Примечание о фотографиях
-        doc.fontSize(10)
-            .fillColor('#64748b')
-            .font('Helvetica')
-            .text('Все фотографии были проанализированы экспертом в процессе проверки подлинности.', margin, currentY)
-
-        const imageList = images.map((img, index) =>
-            `${index + 1}. ${img.type === 'INITIAL' ? 'Основное фото' : 'Дополнительное фото'} (ID: ${img.id.slice(0, 8)}...)`
-        ).join('\n')
-
-        currentY += 20
-        doc.text(imageList, margin, currentY)
-
-        return currentY + (images.length * 15) + 20
-    }
-
-    // Рисуем футер
-    private static async drawFooter(
-        doc: PDFKit.PDFDocument,
-        pageWidth: number,
-        pageHeight: number,
-        margin: number,
-        secondaryColor: string
-    ) {
-
-        const footerY = pageHeight - 60
-
-        // Линия
-        doc.moveTo(margin, footerY)
-            .lineTo(pageWidth - margin, footerY)
-            .stroke(secondaryColor)
-
-        // Текст футера
-        doc.fontSize(9)
-            .fillColor(secondaryColor)
-            .font('Helvetica')
-            .text('Данный сертификат выдан BagCheck - профессиональным сервисом аутентификации дизайнерских изделий.',
-                margin, footerY + 10, { align: 'center' })
-            .text('Для верификации подлинности сертификата используйте QR-код или посетите сайт BagCheck.',
-                margin, footerY + 25, { align: 'center' })
-    }
-
-    // Вспомогательная функция для создания имени файла
-    static generateFileName(ticketId: string): string {
-        const timestamp = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
-        return `BagCheck-Certificate-${ticketId}-${timestamp}.pdf`
     }
 }

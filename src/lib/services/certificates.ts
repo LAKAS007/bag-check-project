@@ -1,28 +1,19 @@
+// src/lib/services/certificates.ts
 import { prisma } from '@/lib/prisma'
-import QRCode from 'qrcode'
 import { nanoid } from 'nanoid'
 
 export class CertificateService {
-    // Создание сертификата
-    static async create(ticketId: string, pdfUrl: string) {
+    // Создание сертификата (только для сохранения QR кода в БД)
+    static async create(ticketId: string, pdfUrl: string = 'not_stored') {
         // Генерируем уникальный QR код
-        const qrCode = nanoid(12)
-        const qrCodeUrl = `${process.env.APP_URL}/verify/${qrCode}`
+        const qrCode = `CERT-${ticketId}-${nanoid(8)}`
 
-        // Генерируем QR код изображение
-        const qrCodeDataUrl = await QRCode.toDataURL(qrCodeUrl, {
-            width: 200,
-            margin: 2,
-            color: {
-                dark: '#000000',
-                light: '#FFFFFF'
-            }
-        })
+        console.log('🔗 Создаем запись сертификата с QR кодом:', qrCode)
 
         return await prisma.certificate.create({
             data: {
                 ticketId,
-                pdfUrl,
+                pdfUrl, // В нашем случае не используется, так как сертификаты не сохраняются
                 qrCode
             },
             include: {
@@ -35,8 +26,10 @@ export class CertificateService {
         })
     }
 
-    // Поиск сертификата по QR коду
+    // Поиск сертификата по QR коду (для верификации)
     static async findByQrCode(qrCode: string) {
+        console.log('🔍 Ищем сертификат по QR коду:', qrCode)
+
         return await prisma.certificate.findUnique({
             where: { qrCode },
             include: {
@@ -78,17 +71,30 @@ export class CertificateService {
         })
     }
 
-    // Генерация QR кода для верификации
-    static async generateQrCodeImage(qrCode: string): Promise<string> {
-        const verifyUrl = `${process.env.APP_URL}/verify/${qrCode}`
+    // Получение статистики сертификатов
+    static async getStats() {
+        const [total, authentic, fake] = await Promise.all([
+            prisma.certificate.count(),
+            prisma.certificate.count({
+                where: {
+                    ticket: {
+                        result: 'AUTHENTIC'
+                    }
+                }
+            }),
+            prisma.certificate.count({
+                where: {
+                    ticket: {
+                        result: 'FAKE'
+                    }
+                }
+            })
+        ])
 
-        return await QRCode.toDataURL(verifyUrl, {
-            width: 200,
-            margin: 2,
-            color: {
-                dark: '#000000',
-                light: '#FFFFFF'
-            }
-        })
+        return {
+            total,
+            authentic,
+            fake
+        }
     }
 }

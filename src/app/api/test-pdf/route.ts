@@ -1,62 +1,95 @@
-// src/app/api/test-pdf/route.ts - ДЛЯ ТЕСТИРОВАНИЯ
+// src/app/api/test-pdf/route.ts
 import { NextRequest, NextResponse } from 'next/server'
-import { PDFCertificateGenerator } from '@/lib/pdf-generator'
+import { PDFCertificateGenerator, CertificateData } from '@/lib/pdf-generator'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
     try {
-        console.log('🧪 Тестируем генерацию PDF сертификата...')
+        console.log('🧪 Тестируем генерацию сертификата...')
 
         // Тестовые данные
-        const testData = {
-            ticketId: 'test-ticket-001',
-            qrCode: 'test-qr-123456',
-            result: 'AUTHENTIC' as const,
-            comment: 'После детального анализа всех предоставленных фотографий, включая проверку логотипа, швов, фурнитуры и серийного номера, эксперт подтверждает подлинность данного изделия Louis Vuitton. Все элементы полностью соответствуют оригинальным стандартам качества бренда.',
+        const testData: CertificateData = {
+            ticketId: 'TEST-' + Math.random().toString(36).substr(2, 8).toUpperCase(),
             clientEmail: 'test@example.com',
-            images: [
-                {
-                    id: 'img-1',
-                    url: 'https://example.com/image1.jpg',
-                    type: 'INITIAL'
-                },
-                {
-                    id: 'img-2',
-                    url: 'https://example.com/image2.jpg',
-                    type: 'INITIAL'
-                },
-                {
-                    id: 'img-3',
-                    url: 'https://example.com/image3.jpg',
-                    type: 'ADDITIONAL'
-                }
-            ],
-            expertName: 'Test Expert',
-            issuedAt: new Date()
+            result: 'AUTHENTIC',
+            comment: 'Все элементы аутентификации соответствуют оригиналу. Качество материалов и фурнитуры на высоком уровне. Проверены: серийный номер, фурнитура, строчки, материал, голограммы и маркировка.',
+            brandName: 'Louis Vuitton',
+            itemType: 'Сумка Neverfull MM',
+            checkDate: new Date(),
+            expertName: 'Анна Петрова',
+            qrCode: 'TEST-QR-' + Math.random().toString(36).substr(2, 8)
         }
 
-        // Генерируем PDF
-        const pdfBuffer = await PDFCertificateGenerator.generateCertificate(testData)
-        const fileName = PDFCertificateGenerator.generateFileName(testData.ticketId)
+        console.log('📄 Данные для сертификата:', {
+            ticketId: testData.ticketId,
+            result: testData.result,
+            brand: testData.brandName
+        })
 
-        console.log('✅ PDF успешно создан!')
-        console.log('📄 Размер файла:', pdfBuffer.length, 'байт')
-        console.log('📁 Имя файла:', fileName)
+        // Генерируем сертификат
+        const certificateBuffer = await PDFCertificateGenerator.generateCertificate(testData)
 
-        // Возвращаем PDF как download
-        return new NextResponse(pdfBuffer, {
+        console.log('✅ Сертификат сгенерирован успешно, размер:', certificateBuffer.length, 'байт')
+
+        // Возвращаем HTML файл (пока что)
+        // Позже можно будет добавить настоящий PDF через Puppeteer
+        return new NextResponse(certificateBuffer, {
+            status: 200,
             headers: {
-                'Content-Type': 'application/pdf',
-                'Content-Disposition': `attachment; filename="${fileName}"`,
-                'Content-Length': pdfBuffer.length.toString()
+                'Content-Type': 'text/html; charset=utf-8',
+                'Content-Disposition': `inline; filename="certificate-${testData.ticketId}.html"`,
+                'Cache-Control': 'no-store'
             }
         })
 
     } catch (error) {
-        console.error('❌ Ошибка тестирования PDF:', error)
+        console.error('❌ Ошибка тестирования сертификата:', error)
 
         return NextResponse.json({
-            error: 'Не удалось создать тестовый PDF',
-            details: error instanceof Error ? error.message : 'Unknown error'
+            success: false,
+            error: 'Ошибка генерации сертификата',
+            details: error instanceof Error ? error.message : 'Неизвестная ошибка',
+            stack: error instanceof Error ? error.stack : undefined
+        }, { status: 500 })
+    }
+}
+
+// POST для тестирования с кастомными данными
+export async function POST(request: NextRequest) {
+    try {
+        const body = await request.json()
+
+        const testData: CertificateData = {
+            ticketId: body.ticketId || 'TEST-' + Date.now(),
+            clientEmail: body.clientEmail || 'test@example.com',
+            result: body.result || 'AUTHENTIC',
+            comment: body.comment || 'Тестовый комментарий эксперта. Все проверки пройдены успешно.',
+            brandName: body.brandName || 'Test Brand',
+            itemType: body.itemType || 'Сумка',
+            checkDate: new Date(),
+            expertName: body.expertName || 'Test Expert',
+            qrCode: body.qrCode || 'TEST-QR-' + Date.now()
+        }
+
+        console.log('📄 Генерируем сертификат с пользовательскими данными:', testData)
+
+        const certificateBuffer = await PDFCertificateGenerator.generateCertificate(testData)
+
+        return new NextResponse(certificateBuffer, {
+            status: 200,
+            headers: {
+                'Content-Type': 'text/html; charset=utf-8',
+                'Content-Disposition': `inline; filename="certificate-${testData.ticketId}.html"`,
+                'Cache-Control': 'no-store'
+            }
+        })
+
+    } catch (error) {
+        console.error('❌ Ошибка генерации сертификата:', error)
+
+        return NextResponse.json({
+            success: false,
+            error: 'Ошибка генерации сертификата',
+            details: error instanceof Error ? error.message : 'Неизвестная ошибка'
         }, { status: 500 })
     }
 }

@@ -1,4 +1,4 @@
-// src/app/api/verify/[id]/route.ts
+// src/app/api/verify-certificate/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
@@ -6,7 +6,7 @@ type RouteContext = {
     params: Promise<{ id: string }>
 }
 
-// GET /api/verify/[id] - верификация сертификата по QR коду
+// GET /api/verify-certificate/[id] - верификация сертификата по QR коду
 export async function GET(
     request: NextRequest,
     context: RouteContext

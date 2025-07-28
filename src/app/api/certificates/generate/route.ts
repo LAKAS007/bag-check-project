@@ -1,149 +1,86 @@
-// src/app/api/certificates/generate/route.ts
+// src/app/api/certificates/generate/route.ts - Генерация сертификата на лету
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
-import { PDFCertificateGenerator } from '@/lib/pdf-generator'
+import { PDFCertificateGenerator, CertificateData } from '@/lib/pdf-generator'
+import { TicketService } from '@/lib/services/tickets'
 import { nanoid } from 'nanoid'
 
-export async function POST(req: NextRequest) {
+// POST /api/certificates/generate - создание и отправка сертификата
+export async function POST(request: NextRequest) {
     try {
-        const { ticketId } = await req.json()
+        const { ticketId, action = 'download' } = await request.json()
 
         if (!ticketId) {
-            return NextResponse.json(
-                { error: 'ID заявки обязателен' },
-                { status: 400 }
-            )
+            return NextResponse.json({
+                success: false,
+                error: 'Необходимо указать ID тикета'
+            }, { status: 400 })
         }
 
-        console.log('🔄 Генерируем сертификат для заявки:', ticketId)
-
-        // Получаем данные заявки
-        const ticket = await prisma.ticket.findUnique({
-            where: { id: ticketId },
-            include: {
-                images: true,
-                certificate: true
-            }
-        })
-
+        // Получаем тикет с данными
+        const ticket = await TicketService.findById(ticketId)
         if (!ticket) {
-            return NextResponse.json(
-                { error: 'Заявка не найдена' },
-                { status: 404 }
-            )
+            return NextResponse.json({
+                success: false,
+                error: 'Тикет не найден'
+            }, { status: 404 })
         }
 
-        // Проверяем, что заявка завершена и результат положительный
-        if (ticket.status !== 'COMPLETED') {
-            return NextResponse.json(
-                { error: 'Заявка еще не завершена' },
-                { status: 400 }
-            )
+        // Проверяем что тикет завершен и есть результат
+        if (ticket.status !== 'COMPLETED' || !ticket.result) {
+            return NextResponse.json({
+                success: false,
+                error: 'Тикет еще не завершен или нет результата проверки'
+            }, { status: 400 })
         }
 
-        if (ticket.result !== 'AUTHENTIC') {
-            return NextResponse.json(
-                { error: 'Сертификат выдается только для подлинных товаров' },
-                { status: 400 }
-            )
+        // Подготавливаем данные для сертификата
+        const certificateData: CertificateData = {
+            ticketId: ticket.id,
+            clientEmail: ticket.clientEmail,
+            result: ticket.result,
+            comment: ticket.comment || undefined,
+            brandName: 'Designer Bag', // TODO: извлекать из метаданных тикета
+            itemType: 'Сумка',
+            checkDate: ticket.updatedAt,
+            expertName: 'BagCheck Expert',
+            qrCode: `CERT-${ticket.id}-${nanoid(8)}` // Простой QR без сохранения в БД
         }
 
-        // Проверяем, не создан ли уже сертификат
-        if (ticket.certificate) {
+        console.log('🔄 Генерируем сертификат для тикета:', ticketId)
+
+        // Генерируем HTML сертификат
+        const certificateBuffer = await PDFCertificateGenerator.generateCertificate(certificateData)
+
+        console.log('✅ Сертификат сгенерирован, размер:', certificateBuffer.length, 'байт')
+
+        // Возвращаем в зависимости от действия
+        if (action === 'email') {
+            // TODO: Отправить по email и вернуть статус
             return NextResponse.json({
                 success: true,
-                certificate: ticket.certificate,
-                message: 'Сертификат уже существует'
+                message: 'Сертификат отправлен на email',
+                ticketId: ticket.id,
+                clientEmail: ticket.clientEmail
             })
         }
 
-        // Генерируем уникальный QR код
-        const qrCode = nanoid(12)
-
-        // Подготавливаем данные для PDF
-        const certificateData = {
-            ticketId: ticket.id,
-            qrCode: qrCode,
-            result: ticket.result as 'AUTHENTIC',
-            comment: ticket.comment || 'Товар прошел экспертную проверку и признан подлинным.',
-            clientEmail: ticket.clientEmail,
-            images: ticket.images,
-            expertName: 'Certified Expert',
-            issuedAt: new Date()
-        }
-
-        // Генерируем PDF
-        const { pdfUrl } = await PDFCertificateGenerator.generateCertificate(certificateData)
-
-        // Сохраняем сертификат в БД
-        const certificate = await prisma.certificate.create({
-            data: {
-                ticketId: ticket.id,
-                qrCode: qrCode,
-                pdfUrl: pdfUrl
+        // По умолчанию - скачивание
+        return new NextResponse(certificateBuffer, {
+            status: 200,
+            headers: {
+                'Content-Type': 'text/html; charset=utf-8',
+                'Content-Disposition': `attachment; filename="certificate-${ticket.id}.html"`,
+                'Cache-Control': 'no-store'
             }
         })
 
-        console.log('✅ Сертификат успешно создан:', certificate.id)
+    } catch (error) {
+        console.error('❌ Ошибка создания сертификата:', error)
 
         return NextResponse.json({
-            success: true,
-            certificate: certificate,
-            message: 'Сертификат успешно создан'
-        })
-
-    } catch (error) {
-        console.error('❌ Ошибка генерации сертификата:', error)
-
-        return NextResponse.json(
-            { error: 'Не удалось создать сертификат' },
-            { status: 500 }
-        )
-    }
-}
-
-// src/app/api/certificates/[id]/route.ts - Получение сертификата
-
-type RouteContext = {
-    params: Promise<{ id: string }>
-}
-
-export async function GET(
-    request: NextRequest,
-    context: RouteContext
-) {
-    try {
-        const { id } = await context.params
-
-        const certificate = await prisma.certificate.findUnique({
-            where: { id },
-            include: {
-                ticket: {
-                    include: {
-                        images: true
-                    }
-                }
-            }
-        })
-
-        if (!certificate) {
-            return NextResponse.json(
-                { error: 'Сертификат не найден' },
-                { status: 404 }
-            )
-        }
-
-        return NextResponse.json({
-            success: true,
-            certificate: certificate
-        })
-
-    } catch (error) {
-        console.error('Ошибка получения сертификата:', error)
-
-        return NextResponse.json(
-            { error: 'Ошибка получения сертификата' },
-            { status: 500 }
-        )
+            success: false,
+            error: 'Ошибка создания сертификата',
+            details: error instanceof Error ? error.message : 'Неизвестная ошибка'
+        }, { status: 500 })
     }
 }

@@ -1,4 +1,4 @@
-// src/app/verify/[id]/page.tsx - ИСПРАВЛЕННАЯ ВЕРСИЯ для Next.js 15
+// src/app/verify-certificate/[id]/page.tsx - ИСПРАВЛЕННАЯ ВЕРСИЯ для Next.js 15
 'use client'
 
 import React, { useState, useEffect } from 'react'
@@ -141,7 +141,7 @@ export default function CertificateVerificationPage({ params }: { params: Promis
                 <header className="border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                         <div className="flex justify-between items-center h-16">
-                            <Link href="/" className="flex items-center space-x-2">
+                            <Link href="/public" className="flex items-center space-x-2">
                                 <Shield className="h-8 w-8 text-blue-600" />
                                 <span className="text-xl font-bold text-slate-900 dark:text-white">BagCheck</span>
                             </Link>
@@ -162,7 +162,7 @@ export default function CertificateVerificationPage({ params }: { params: Promis
                         </p>
                         <div className="space-y-3">
                             <Link
-                                href="/"
+                                href="/public"
                                 className="block w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
                             >
                                 На главную
@@ -190,7 +190,7 @@ export default function CertificateVerificationPage({ params }: { params: Promis
             <header className="border-b border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex justify-between items-center h-16">
-                        <Link href="/" className="flex items-center space-x-2">
+                        <Link href="/public" className="flex items-center space-x-2">
                             <Shield className="h-8 w-8 text-blue-600" />
                             <span className="text-xl font-bold text-slate-900 dark:text-white">BagCheck</span>
                         </Link>
@@ -480,7 +480,7 @@ export default function CertificateVerificationPage({ params }: { params: Promis
                             </p>
 
                             <div className="mt-4 flex flex-wrap gap-4 text-xs text-blue-700 dark:text-blue-400">
-                                <Link href="/" className="hover:underline">О компании</Link>
+                                <Link href="/public" className="hover:underline">О компании</Link>
                                 <Link href="/contact" className="hover:underline">Контакты</Link>
                                 <Link href="/legal" className="hover:underline">Правовая информация</Link>
                             </div>

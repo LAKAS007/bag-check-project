@@ -1,21 +1,23 @@
+// src/app/api/tickets/[id]/request-photos/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { TicketService } from '@/lib/services/tickets'
+import { EmailService } from '@/lib/services/email'
 import { ApiResponse } from '@/types'
 
 type RouteContext = {
     params: Promise<{ id: string }>
 }
 
-// POST /api/tickets/[id]/photo-request - создание запроса на дополнительные фото
+// POST /api/tickets/[id]/request-photos - запрос дополнительных фото
 export async function POST(
     request: NextRequest,
     context: RouteContext
 ) {
     try {
         const { id } = await context.params
-        const body = await request.json()
+        const { description } = await request.json()
 
-        const { description } = body as { description: string }
+        console.log('📸 Запрос дополнительных фото для тикета:', id)
 
         // Валидация
         if (!description || description.trim().length === 0) {
@@ -32,40 +34,74 @@ export async function POST(
             }, { status: 400 })
         }
 
-        // Проверка существования тикета
-        const existingTicket = await TicketService.findById(id)
-        if (!existingTicket) {
+        // Получаем тикет
+        const ticket = await TicketService.findById(id)
+        if (!ticket) {
             return NextResponse.json<ApiResponse>({
                 success: false,
                 error: 'Тикет не найден'
             }, { status: 404 })
         }
 
-        // Проверка что тикет можно переводить в статус "нужны доп фото"
-        if (existingTicket.status === 'COMPLETED') {
+        // Проверка статуса
+        if (ticket.status === 'COMPLETED') {
             return NextResponse.json<ApiResponse>({
                 success: false,
                 error: 'Нельзя запросить дополнительные фото для завершенного тикета'
             }, { status: 400 })
         }
 
-        // Создание запроса на дополнительные фото
+        console.log('📝 Создаем запрос дополнительных фото:', description.trim())
+
+        // Создаем запрос на дополнительные фото (это также обновит статус на NEEDS_MORE_PHOTOS)
         const photoRequest = await TicketService.createPhotoRequest(id, description.trim())
 
-        // TODO: Здесь будет отправка email клиенту с уведомлением
+        // Отправляем email с запросом дополнительных фото
+        try {
+            await EmailService.sendPhotoRequest({
+                ticketId: ticket.id,
+                clientEmail: ticket.clientEmail,
+                description: description.trim(),
+                uploadUrl: `${process.env.NEXT_PUBLIC_APP_URL}/upload/additional/${ticket.id}`
+            })
 
-        return NextResponse.json<ApiResponse>({
-            success: true,
-            data: photoRequest,
-            message: 'Запрос на дополнительные фото создан. Клиент получит уведомление на email.'
-        })
+            console.log('✅ Email с запросом дополнительных фото отправлен:', ticket.clientEmail)
+
+            return NextResponse.json<ApiResponse>({
+                success: true,
+                data: {
+                    ticket: {
+                        ...ticket,
+                        status: 'NEEDS_MORE_PHOTOS'
+                    },
+                    photoRequest
+                },
+                message: 'Запрос на дополнительные фото отправлен клиенту на email'
+            })
+
+        } catch (emailError) {
+            console.error('❌ Ошибка отправки email:', emailError)
+
+            return NextResponse.json<ApiResponse>({
+                success: true,
+                data: {
+                    ticket: {
+                        ...ticket,
+                        status: 'NEEDS_MORE_PHOTOS'
+                    },
+                    photoRequest
+                },
+                warning: 'Запрос создан, но не удалось отправить email клиенту'
+            })
+        }
 
     } catch (error) {
-        console.error('Ошибка создания запроса на фото:', error)
+        console.error('❌ Ошибка создания запроса дополнительных фото:', error)
 
         return NextResponse.json<ApiResponse>({
             success: false,
-            error: 'Ошибка создания запроса'
+            error: 'Ошибка создания запроса',
+            details: error instanceof Error ? error.message : 'Неизвестная ошибка'
         }, { status: 500 })
     }
 }
