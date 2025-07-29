@@ -1,249 +1,190 @@
-// src/app/api/tickets/[id]/route.ts - ФИНАЛЬНАЯ ВЕРСИЯ
-import { NextRequest, NextResponse } from 'next/server'
-import { TicketService } from '@/lib/services/tickets'
-import { prisma } from '@/lib/prisma'
-import { PDFCertificateGenerator } from '@/lib/pdf-generator'
-import { nanoid } from 'nanoid'
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { uploadToSupabase } from '@/lib/supabase';
 
-type RouteContext = {
-    params: Promise<{ id: string }>
-}
+export const dynamic = 'force-dynamic';
 
-// GET /api/tickets/[id] - получение конкретного тикета
-export async function GET(
-    request: NextRequest,
-    context: RouteContext
-) {
+// POST /api/tickets - создание нового тикета с загрузкой фото
+export async function POST(req: NextRequest) {
     try {
-        const { id } = await context.params
+        console.log('🚀 Starting ticket creation with Supabase...');
 
-        const ticket = await TicketService.findById(id)
+        // Проверяем переменные окружения
+        console.log('🔗 Supabase URL:', process.env.NEXT_PUBLIC_SUPABASE_URL);
+        console.log('🔑 Service key exists:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
 
-        if (!ticket) {
-            return NextResponse.json({
-                success: false,
-                error: 'Тикет не найден'
-            }, { status: 404 })
+        const formData = await req.formData();
+        const email = formData.get('email') as string;
+
+        if (!email) {
+            return NextResponse.json(
+                { error: 'Email is required' },
+                { status: 400 }
+            );
         }
 
-        return NextResponse.json({
-            success: true,
-            data: ticket
-        })
-
-    } catch (error) {
-        console.error('Ошибка получения тикета:', error)
-
-        return NextResponse.json({
-            success: false,
-            error: 'Ошибка получения данных'
-        }, { status: 500 })
-    }
-}
-
-// PATCH /api/tickets/[id] - обновление статуса тикета (для экспертов)
-export async function PATCH(
-    request: NextRequest,
-    context: RouteContext
-) {
-    try {
-        const { id } = await context.params
-        const body = await request.json()
-
-        const { status, result, comment } = body
-
-        // Валидация статуса
-        const validStatuses = ['PENDING', 'NEEDS_MORE_PHOTOS', 'IN_REVIEW', 'COMPLETED']
-        if (!validStatuses.includes(status)) {
-            return NextResponse.json({
-                success: false,
-                error: 'Некорректный статус'
-            }, { status: 400 })
-        }
-
-        // Если статус COMPLETED, результат обязателен
-        if (status === 'COMPLETED' && !result) {
-            return NextResponse.json({
-                success: false,
-                error: 'Для завершенного тикета необходимо указать результат'
-            }, { status: 400 })
-        }
-
-        // Проверка существования тикета
-        const existingTicket = await prisma.ticket.findUnique({
-            where: { id },
-            include: {
-                images: true,
-                certificate: true
+        // Получаем все файлы
+        const files: File[] = [];
+        for (const [key, value] of formData.entries()) {
+            if (value instanceof File && key.startsWith('file_')) {
+                files.push(value);
+                console.log(`📷 Found file: ${value.name} (${value.size} bytes)`);
             }
-        })
-
-        if (!existingTicket) {
-            return NextResponse.json({
-                success: false,
-                error: 'Тикет не найден'
-            }, { status: 404 })
         }
 
-        // Обновление тикета
-        const updatedTicket = await prisma.ticket.update({
-            where: { id },
+        if (files.length === 0) {
+            return NextResponse.json(
+                { error: 'At least one image is required' },
+                { status: 400 }
+            );
+        }
+
+        console.log(`📧 Email: ${email}`);
+        console.log(`📷 Files count: ${files.length}`);
+
+        // Создаем тикет в БД
+        const ticket = await prisma.ticket.create({
             data: {
-                status,
-                result,
-                comment,
-                updatedAt: new Date()
+                clientEmail: email,
+                status: 'PENDING',
             },
+        });
+
+        console.log(`🎫 Created ticket: ${ticket.id}`);
+
+        // Загружаем файлы в Supabase Storage
+        const imagePromises = files.map(async (file, index) => {
+            try {
+                const buffer = Buffer.from(await file.arrayBuffer());
+                const extension = file.name.split('.').pop() || 'jpg';
+                const fileName = `${ticket.id}_image_${index + 1}.${extension}`;
+
+                console.log(`📤 Uploading file ${index + 1}/${files.length}: ${fileName}`);
+
+                // Загружаем в Supabase (передаем contentType как третий параметр)
+                const { url, path } = await uploadToSupabase(
+                    buffer,
+                    fileName,
+                    file.type
+                );
+
+                console.log(`✅ File uploaded successfully: ${url}`);
+                console.log(`📁 File path: ${path}`);
+
+                // Сохраняем в БД
+                const image = await prisma.image.create({
+                    data: {
+                        ticketId: ticket.id,
+                        url: url,
+                        publicId: path, // Используем path как publicId для возможности удаления
+                        type: 'INITIAL'
+                    }
+                });
+
+                console.log(`💾 Image saved to DB: ${image.id}`);
+                return image;
+
+            } catch (uploadError) {
+                console.error(`❌ Error uploading file ${index + 1}:`, uploadError);
+                throw uploadError;
+            }
+        });
+
+        // Ждем загрузки всех файлов
+        const images = await Promise.all(imagePromises);
+
+        // Получаем полный тикет с изображениями
+        const fullTicket = await prisma.ticket.findUnique({
+            where: { id: ticket.id },
             include: {
                 images: true,
-                certificate: true
-            }
-        })
+            },
+        });
 
-        // 🔥 СОЗДАНИЕ СЕРТИФИКАТА И ОТПРАВКА EMAIL
-        if (status === 'COMPLETED') {
-            try {
-                if (result === 'AUTHENTIC') {
-                    console.log('✅ Товар подлинный - создаем сертификат и отправляем email')
+        console.log(`🎉 Ticket created successfully: ${ticket.id}`);
+        console.log(`📊 Total images uploaded: ${images.length}`);
 
-                    // Создаем или обновляем запись о сертификате в БД (только метаданные)
-                    let certificate = existingTicket.certificate
-
-                    if (!certificate) {
-                        const qrCode = nanoid(12)
-                        certificate = await prisma.certificate.create({
-                            data: {
-                                ticketId: updatedTicket.id,
-                                qrCode: qrCode,
-                                pdfUrl: '' // Пустая строка, так как не храним файл
-                            }
-                        })
-                    }
-
-                    // Генерируем PDF в памяти
-                    const certificateData = {
-                        ticketId: updatedTicket.id,
-                        qrCode: certificate.qrCode,
-                        result: 'AUTHENTIC' as const,
-                        comment: updatedTicket.comment || 'Товар прошел экспертную проверку и признан подлинным.',
-                        clientEmail: updatedTicket.clientEmail,
-                        images: updatedTicket.images,
-                        expertName: 'Certified Expert',
-                        issuedAt: new Date()
-                    }
-
-                    const pdfBuffer = await PDFCertificateGenerator.generateCertificate(certificateData)
-                    const fileName = PDFCertificateGenerator.generateFileName(updatedTicket.id)
-
-                    // TODO: Здесь будет отправка email с PDF вложением
-                    console.log('📧 Отправляем email с сертификатом на:', updatedTicket.clientEmail)
-                    console.log('📄 PDF размер:', pdfBuffer.length, 'байт')
-                    console.log('📁 Имя файла:', fileName)
-
-                    // Временно логируем, позже заменим на реальную отправку email
-                    // await sendCertificateEmail(updatedTicket.clientEmail, pdfBuffer, fileName, certificateData)
-
-                } else {
-                    console.log('❌ Товар не подлинный - отправляем email с результатом')
-
-                    // TODO: Здесь будет отправка email о том, что товар не подлинный
-                    console.log('📧 Отправляем email о подделке на:', updatedTicket.clientEmail)
-                    // await sendFakeResultEmail(updatedTicket.clientEmail, updatedTicket.comment)
-                }
-
-                // Получаем финальный тикет с сертификатом
-                const finalTicket = await prisma.ticket.findUnique({
-                    where: { id },
-                    include: {
-                        images: true,
-                        certificate: true
-                    }
-                })
-
-                return NextResponse.json({
-                    success: true,
-                    data: finalTicket,
-                    message: result === 'AUTHENTIC'
-                        ? 'Заявка завершена. Сертификат отправлен на email клиента.'
-                        : 'Заявка завершена. Результат отправлен на email клиента.'
-                })
-
-            } catch (emailError) {
-                console.error('❌ Ошибка отправки email:', emailError)
-
-                return NextResponse.json({
-                    success: true,
-                    data: updatedTicket,
-                    message: `Статус обновлен, но не удалось отправить email: ${emailError}`
-                })
-            }
-        }
-
-        // Обычное обновление статуса
         return NextResponse.json({
             success: true,
-            data: updatedTicket,
-            message: `Статус тикета обновлен на: ${status}`
-        })
+            ticket: fullTicket,
+            message: `Ticket created successfully with ${images.length} images`,
+        });
 
     } catch (error) {
-        console.error('Ошибка обновления тикета:', error)
+        console.error('❌ Error creating ticket:', error);
 
-        return NextResponse.json({
-            success: false,
-            error: 'Ошибка обновления данных'
-        }, { status: 500 })
+        // Более детальная ошибка для отладки
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack : undefined;
+
+        console.error('Error details:', { errorMessage, errorStack });
+
+        return NextResponse.json(
+            {
+                error: 'Failed to create ticket',
+                details: process.env.NODE_ENV === 'development' ? errorMessage : undefined
+            },
+            { status: 500 }
+        );
     }
 }
 
-// POST /api/tickets/[id] - добавление дополнительных изображений
-export async function POST(
-    request: NextRequest,
-    context: RouteContext
-) {
+// GET /api/tickets - получение списка всех тикетов (для дашборда)
+export async function GET(request: NextRequest) {
     try {
-        const { id } = await context.params
-        const body = await request.json()
+        const { searchParams } = new URL(request.url);
+        const status = searchParams.get('status');
+        const limit = searchParams.get('limit');
+        const offset = searchParams.get('offset');
 
-        const { images } = body as { images: { url: string; publicId: string }[] }
+        const whereClause = status ? { status } : {};
+        const limitNum = limit ? parseInt(limit) : undefined;
+        const offsetNum = offset ? parseInt(offset) : undefined;
 
-        if (!images || images.length === 0) {
-            return NextResponse.json({
-                success: false,
-                error: 'Необходимо загрузить минимум одно изображение'
-            }, { status: 400 })
-        }
+        const tickets = await prisma.ticket.findMany({
+            where: whereClause,
+            include: {
+                images: true,
+                requests: true,
+                certificate: true,
+                _count: {
+                    select: {
+                        images: true,
+                        requests: true,
+                    },
+                },
+            },
+            orderBy: {
+                createdAt: 'desc'
+            },
+            take: limitNum,
+            skip: offsetNum
+        });
 
-        const existingTicket = await TicketService.findById(id)
-        if (!existingTicket) {
-            return NextResponse.json({
-                success: false,
-                error: 'Тикет не найден'
-            }, { status: 404 })
-        }
+        // Подсчет общего количества для пагинации
+        const total = await prisma.ticket.count({
+            where: whereClause
+        });
 
-        await TicketService.addImages(id, images)
-
-        if (existingTicket.status === 'NEEDS_MORE_PHOTOS') {
-            await TicketService.updateStatus(id, {
-                status: 'IN_REVIEW'
-            })
-        }
-
-        const updatedTicket = await TicketService.findById(id)
-
+        // Возвращаем в формате, который ожидает dashboard
         return NextResponse.json({
             success: true,
-            data: updatedTicket,
-            message: 'Дополнительные изображения добавлены'
-        })
+            tickets,
+            total,
+            limit: limitNum,
+            offset: offsetNum
+        });
 
     } catch (error) {
-        console.error('Ошибка добавления изображений:', error)
+        console.error('Ошибка получения тикетов:', error);
 
-        return NextResponse.json({
-            success: false,
-            error: 'Ошибка добавления изображений'
-        }, { status: 500 })
+        return NextResponse.json(
+            {
+                success: false,  // Добавляем success: false для ошибок
+                error: 'Ошибка получения данных',
+                details: error instanceof Error ? error.message : 'Unknown error'
+            },
+            { status: 500 }
+        );
     }
 }

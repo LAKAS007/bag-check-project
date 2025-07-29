@@ -1,23 +1,13 @@
-// src/app/api/tickets/[id]/request-photos/route.ts
-import { NextRequest, NextResponse } from 'next/server'
-import { TicketService } from '@/lib/services/tickets'
-import { EmailService } from '@/lib/services/email'
-import { ApiResponse } from '@/types'
-
-type RouteContext = {
-    params: Promise<{ id: string }>
-}
-
-// POST /api/tickets/[id]/request-photos - запрос дополнительных фото
+// POST /api/tickets/[id]/photo-request - создание запроса на дополнительные фото
 export async function POST(
     request: NextRequest,
     context: RouteContext
 ) {
     try {
         const { id } = await context.params
-        const { description } = await request.json()
+        const body = await request.json()
 
-        console.log('📸 Запрос дополнительных фото для тикета:', id)
+        const { description } = body as { description: string }
 
         // Валидация
         if (!description || description.trim().length === 0) {
@@ -34,74 +24,63 @@ export async function POST(
             }, { status: 400 })
         }
 
-        // Получаем тикет
-        const ticket = await TicketService.findById(id)
-        if (!ticket) {
+        // Проверка существования тикета
+        const existingTicket = await TicketService.findById(id)
+        if (!existingTicket) {
             return NextResponse.json<ApiResponse>({
                 success: false,
                 error: 'Тикет не найден'
             }, { status: 404 })
         }
 
-        // Проверка статуса
-        if (ticket.status === 'COMPLETED') {
+        // Проверка что тикет можно переводить в статус "нужны доп фото"
+        if (existingTicket.status === 'COMPLETED') {
             return NextResponse.json<ApiResponse>({
                 success: false,
                 error: 'Нельзя запросить дополнительные фото для завершенного тикета'
             }, { status: 400 })
         }
 
-        console.log('📝 Создаем запрос дополнительных фото:', description.trim())
-
-        // Создаем запрос на дополнительные фото (это также обновит статус на NEEDS_MORE_PHOTOS)
+        // Создание запроса на дополнительные фото
         const photoRequest = await TicketService.createPhotoRequest(id, description.trim())
 
-        // Отправляем email с запросом дополнительных фото
+        // ✨ ОТПРАВКА EMAIL С ЗАПРОСОМ ДОПОЛНИТЕЛЬНЫХ ФОТО
         try {
+            console.log(`📧 Sending photo request email for ticket: ${id}`)
+
+            // Импортируем EmailService
+            const { EmailService } = await import('@/lib/services/email')
+
+            // Формируем URL для загрузки дополнительных фото
+            const uploadUrl = `${process.env.NEXT_PUBLIC_APP_URL}/upload/additional/${id}`
+
+            // Отправляем email с запросом фото
             await EmailService.sendPhotoRequest({
-                ticketId: ticket.id,
-                clientEmail: ticket.clientEmail,
+                ticketId: id,
+                clientEmail: existingTicket.clientEmail,
                 description: description.trim(),
-                uploadUrl: `${process.env.NEXT_PUBLIC_APP_URL}/upload/additional/${ticket.id}`
+                uploadUrl: uploadUrl
             })
 
-            console.log('✅ Email с запросом дополнительных фото отправлен:', ticket.clientEmail)
-
-            return NextResponse.json<ApiResponse>({
-                success: true,
-                data: {
-                    ticket: {
-                        ...ticket,
-                        status: 'NEEDS_MORE_PHOTOS'
-                    },
-                    photoRequest
-                },
-                message: 'Запрос на дополнительные фото отправлен клиенту на email'
-            })
+            console.log(`✅ Photo request email sent to: ${existingTicket.clientEmail}`)
 
         } catch (emailError) {
-            console.error('❌ Ошибка отправки email:', emailError)
-
-            return NextResponse.json<ApiResponse>({
-                success: true,
-                data: {
-                    ticket: {
-                        ...ticket,
-                        status: 'NEEDS_MORE_PHOTOS'
-                    },
-                    photoRequest
-                },
-                warning: 'Запрос создан, но не удалось отправить email клиенту'
-            })
+            console.error('❌ Error sending photo request email:', emailError)
+            // Не прерываем процесс, запрос создан, email можно отправить позже
         }
 
+        return NextResponse.json<ApiResponse>({
+            success: true,
+            data: photoRequest,
+            message: 'Запрос на дополнительные фото создан. Клиент получит уведомление на email.'
+        })
+
     } catch (error) {
-        console.error('❌ Ошибка создания запроса дополнительных фото:', error)
+        console.error('Ошибка создания запроса на фото:', error)
 
         return NextResponse.json<ApiResponse>({
             success: false,
-            error: 'Ошибка создания запроса',
-            details: error instanceof Error ? error.message : 'Неизвестная ошибка'
+            error: 'Ошибка создания запроса'
         }, { status: 500 })
     }
 }
