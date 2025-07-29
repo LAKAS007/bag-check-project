@@ -82,10 +82,55 @@ export async function PATCH(
             comment
         })
 
+        // ✨ НОВАЯ ЛОГИКА: Если статус COMPLETED - отправляем email с результатом
+        if (status === 'COMPLETED' && result) {
+            try {
+                console.log(`📧 Sending authentication result email for ticket: ${id}`)
+
+                // Импортируем EmailService динамически
+                const { EmailService } = await import('@/lib/services/email')
+
+                // Данные для email
+                const emailParams = {
+                    ticketId: id,
+                    clientEmail: updatedTicket.clientEmail,
+                    comment: comment || 'Проверка завершена',
+                    brandName: 'Designer Brand', // TODO: можно добавить в форму загрузки
+                    itemType: 'Сумка', // TODO: можно добавить в форму загрузки
+                    checkDate: new Date(),
+                    expertName: 'BagCheck Expert', // TODO: можно добавить систему экспертов
+                    qrCode: `verify-${id}` // Уникальный код для верификации
+                }
+
+                if (result === 'AUTHENTIC') {
+                    console.log(`🏆 Sending authentic certificate for: ${id}`)
+
+                    // Отправляем сертификат подлинности
+                    await EmailService.sendAuthenticCertificate(emailParams)
+
+                } else if (result === 'FAKE') {
+                    console.log(`❌ Sending fake notification for: ${id}`)
+
+                    // Отправляем уведомление о подделке
+                    await EmailService.sendFakeNotification(emailParams)
+                }
+
+                console.log(`✅ Email sent successfully to: ${updatedTicket.clientEmail}`)
+
+            } catch (emailError) {
+                console.error('❌ Error sending email:', emailError)
+
+                // Не прерываем процесс, просто логируем ошибку
+                // Тикет уже обновлен, email можно отправить позже
+            }
+        }
+
         return NextResponse.json<ApiResponse>({
             success: true,
             data: updatedTicket,
-            message: `Статус тикета обновлен на: ${status}`
+            message: status === 'COMPLETED'
+                ? `Экспертиза завершена. Результат "${result === 'AUTHENTIC' ? 'Подлинная' : 'Подделка'}" отправлен на email клиента.`
+                : `Статус тикета обновлен на: ${status}`
         })
 
     } catch (error) {

@@ -1,3 +1,11 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { TicketService } from '@/lib/services/tickets'
+import { ApiResponse } from '@/types'
+
+type RouteContext = {
+    params: Promise<{ id: string }>
+}
+
 // POST /api/tickets/[id]/photo-request - создание запроса на дополнительные фото
 export async function POST(
     request: NextRequest,
@@ -48,7 +56,7 @@ export async function POST(
         try {
             console.log(`📧 Sending photo request email for ticket: ${id}`)
 
-            // Импортируем EmailService
+            // Импортируем EmailService динамически
             const { EmailService } = await import('@/lib/services/email')
 
             // Формируем URL для загрузки дополнительных фото
