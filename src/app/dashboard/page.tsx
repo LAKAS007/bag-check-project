@@ -1,26 +1,46 @@
-'use client';
+// src/app/dashboard/page.tsx - ПОЛНАЯ ВЕРСИЯ с автообновлением
+'use client'
 
-import React, { useState, useEffect } from 'react';
-import { Shield, Eye, Clock, CheckCircle, AlertCircle, XCircle, Search, Filter } from 'lucide-react';
-import Link from 'next/link';
+import React, { useState, useEffect, useCallback } from 'react'
+import { Shield, Search, Filter, Calendar, Mail, Hash, Eye, CheckCircle, XCircle, Clock, AlertCircle, Loader2, RefreshCw, Camera } from 'lucide-react'
+import Link from 'next/link'
+
+interface Image {
+    id: string
+    url: string
+    type: 'INITIAL' | 'ADDITIONAL'
+    uploadedAt: string
+}
+
+interface PhotoRequest {
+    id: string
+    description: string
+    status: 'PENDING' | 'FULFILLED'
+    createdAt: string
+}
+
+interface Certificate {
+    id: string
+    pdfUrl: string
+    qrCode: string
+    createdAt: string
+}
 
 interface Ticket {
-    id: string;
-    status: 'PENDING' | 'NEEDS_MORE_PHOTOS' | 'IN_REVIEW' | 'COMPLETED';
-    result?: 'AUTHENTIC' | 'FAKE';
-    comment?: string;
-    clientEmail: string;
-    createdAt: string;
-    updatedAt: string;
-    images: Array<{
-        id: string;
-        url: string;
-        type: 'INITIAL' | 'ADDITIONAL';
-    }>;
+    id: string
+    status: 'PENDING' | 'NEEDS_MORE_PHOTOS' | 'IN_REVIEW' | 'COMPLETED'
+    result?: 'AUTHENTIC' | 'FAKE'
+    comment?: string
+    clientEmail: string
+    createdAt: string
+    updatedAt: string
+    images: Image[]
+    requests: PhotoRequest[]
+    certificate?: Certificate
     _count: {
-        images: number;
-        requests: number;
-    };
+        images: number
+        requests: number
+    }
 }
 
 const statusConfig = {
@@ -44,74 +64,135 @@ const statusConfig = {
         color: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
         icon: CheckCircle
     }
-};
+}
 
 const resultConfig = {
     AUTHENTIC: {
         label: 'Подлинная',
-        color: 'text-green-600 dark:text-green-400'
+        color: 'text-green-600 dark:text-green-400',
+        icon: CheckCircle
     },
     FAKE: {
         label: 'Подделка',
-        color: 'text-red-600 dark:text-red-400'
+        color: 'text-red-600 dark:text-red-400',
+        icon: XCircle
     }
-};
+}
 
-export default function Dashboard() {
-    const [tickets, setTickets] = useState<Ticket[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [searchTerm, setSearchTerm] = useState('');
-    const [statusFilter, setStatusFilter] = useState<string>('ALL');
+export default function DashboardPage() {
+    const [tickets, setTickets] = useState<Ticket[]>([])
+    const [loading, setLoading] = useState(true)
+    const [refreshing, setRefreshing] = useState(false)
+    const [searchTerm, setSearchTerm] = useState('')
+    const [statusFilter, setStatusFilter] = useState('ALL')
+    const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
-    useEffect(() => {
-        fetchTickets();
-    }, []);
-
-    const fetchTickets = async () => {
+    // Функция для загрузки тикетов
+    const fetchTickets = useCallback(async (isRefresh = false) => {
         try {
-            const response = await fetch('/api/tickets');
-            const data = await response.json();
+            if (isRefresh) {
+                setRefreshing(true)
+            } else {
+                setLoading(true)
+            }
+
+            const response = await fetch('/api/tickets', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                // Отключаем кэш для получения актуальных данных
+                cache: 'no-store'
+            })
+
+            const data = await response.json()
 
             if (data.success) {
-                setTickets(data.tickets);
+                setTickets(data.tickets || [])
+                setLastUpdated(new Date())
+                console.log('✅ Тикеты обновлены:', data.tickets?.length)
             } else {
-                console.error('Failed to fetch tickets');
+                console.error('❌ Ошибка загрузки тикетов:', data.error)
             }
         } catch (error) {
-            console.error('Error fetching tickets:', error);
+            console.error('❌ Ошибка при загрузке тикетов:', error)
         } finally {
-            setLoading(false);
+            setLoading(false)
+            setRefreshing(false)
         }
-    };
+    }, [])
 
+    // Инициализация
+    useEffect(() => {
+        fetchTickets()
+    }, [fetchTickets])
+
+    // Автообновление каждые 30 секунд
+    useEffect(() => {
+        const interval = setInterval(() => {
+            console.log('🔄 Автообновление тикетов...')
+            fetchTickets(true)
+        }, 30000) // 30 секунд
+
+        return () => clearInterval(interval)
+    }, [fetchTickets])
+
+    // Ручное обновление
+    const handleManualRefresh = () => {
+        console.log('🔄 Ручное обновление тикетов...')
+        fetchTickets(true)
+    }
+
+    // Фильтрация тикетов
     const filteredTickets = tickets.filter(ticket => {
-        const matchesSearch = ticket.clientEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            ticket.id.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesStatus = statusFilter === 'ALL' || ticket.status === statusFilter;
+        const matchesSearch = searchTerm === '' ||
+            ticket.clientEmail.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            ticket.id.toLowerCase().includes(searchTerm.toLowerCase())
 
-        return matchesSearch && matchesStatus;
-    });
+        const matchesStatus = statusFilter === 'ALL' || ticket.status === statusFilter
 
-    const formatDate = (dateString: string) => {
-        return new Date(dateString).toLocaleString('ru-RU', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-    };
+        return matchesSearch && matchesStatus
+    })
 
-    const getTicketAge = (createdAt: string) => {
-        const now = new Date();
-        const created = new Date(createdAt);
-        const diffHours = Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60));
+    // Функция для форматирования времени
+    const formatTimeAgo = (createdAt: string) => {
+        const now = new Date()
+        const created = new Date(createdAt)
+        const diffHours = Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60))
 
-        if (diffHours < 1) return 'Только что';
-        if (diffHours < 24) return `${diffHours}ч назад`;
-        const diffDays = Math.floor(diffHours / 24);
-        return `${diffDays}д назад`;
-    };
+        if (diffHours < 1) return 'Только что'
+        if (diffHours < 24) return `${diffHours}ч назад`
+        const diffDays = Math.floor(diffHours / 24)
+        return `${diffDays}д назад`
+    }
+
+    // Рендер статуса
+    const renderStatus = (status: Ticket['status']) => {
+        const config = statusConfig[status]
+        const Icon = config.icon
+
+        return (
+            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-sm font-medium ${config.color}`}>
+                <Icon className="h-3 w-3 mr-1" />
+                {config.label}
+            </span>
+        )
+    }
+
+    // Рендер результата
+    const renderResult = (result?: Ticket['result']) => {
+        if (!result) return <span className="text-slate-400">—</span>
+
+        const config = resultConfig[result]
+        const Icon = config.icon
+
+        return (
+            <span className={`inline-flex items-center ${config.color}`}>
+                <Icon className="h-4 w-4 mr-1" />
+                {config.label}
+            </span>
+        )
+    }
 
     if (loading) {
         return (
@@ -121,7 +202,7 @@ export default function Dashboard() {
                     <p className="text-slate-600 dark:text-slate-300">Загрузка тикетов...</p>
                 </div>
             </div>
-        );
+        )
     }
 
     return (
@@ -137,6 +218,22 @@ export default function Dashboard() {
                         </Link>
 
                         <div className="flex items-center space-x-4">
+                            {lastUpdated && (
+                                <span className="text-sm text-slate-500 dark:text-slate-400">
+                                    Обновлено: {lastUpdated.toLocaleTimeString('ru-RU', {
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                })}
+                                </span>
+                            )}
+                            <button
+                                onClick={handleManualRefresh}
+                                disabled={refreshing}
+                                className="p-2 text-slate-600 hover:text-blue-600 transition-colors disabled:opacity-50"
+                                title="Обновить список"
+                            >
+                                <RefreshCw className={`h-5 w-5 ${refreshing ? 'animate-spin' : ''}`} />
+                            </button>
                             <Link
                                 href="/upload"
                                 className="text-slate-600 hover:text-blue-600 transition-colors"
@@ -162,14 +259,20 @@ export default function Dashboard() {
                     </h1>
                     <p className="text-lg text-slate-600 dark:text-slate-300">
                         Управление заявками на проверку подлинности
+                        {refreshing && (
+                            <span className="ml-2 text-blue-600">
+                                <Loader2 className="h-4 w-4 animate-spin inline mr-1" />
+                                Обновление...
+                            </span>
+                        )}
                     </p>
                 </div>
 
                 {/* Stats */}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
                     {Object.entries(statusConfig).map(([status, config]) => {
-                        const count = tickets.filter(t => t.status === status).length;
-                        const Icon = config.icon;
+                        const count = tickets.filter(t => t.status === status).length
+                        const Icon = config.icon
 
                         return (
                             <div key={status} className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm">
@@ -185,7 +288,7 @@ export default function Dashboard() {
                                     <Icon className="h-8 w-8 text-blue-600" />
                                 </div>
                             </div>
-                        );
+                        )
                     })}
                 </div>
 
@@ -262,86 +365,73 @@ export default function Dashboard() {
                                     </th>
                                 </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                                {filteredTickets.map((ticket) => {
-                                    const statusInfo = statusConfig[ticket.status];
-                                    const StatusIcon = statusInfo.icon;
-
-                                    return (
-                                        <tr key={ticket.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <div className="text-sm font-medium text-slate-900 dark:text-white">
-                                                    {ticket.id.slice(0, 8)}...
-                                                </div>
-                                                <div className="text-xs text-slate-500 dark:text-slate-400">
-                                                    {getTicketAge(ticket.createdAt)}
-                                                </div>
-                                            </td>
-
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <div className="text-sm text-slate-900 dark:text-white">
-                                                    {ticket.clientEmail}
-                                                </div>
-                                            </td>
-
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusInfo.color}`}>
-                            <StatusIcon className="h-3 w-3 mr-1" />
-                              {statusInfo.label}
-                          </span>
-                                            </td>
-
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                {ticket.result ? (
-                                                    <span className={`text-sm font-medium ${resultConfig[ticket.result].color}`}>
-                              {resultConfig[ticket.result].label}
-                            </span>
-                                                ) : (
-                                                    <span className="text-sm text-slate-400">—</span>
+                                <tbody className="bg-white dark:bg-slate-800 divide-y divide-slate-200 dark:divide-slate-700">
+                                {filteredTickets.map((ticket) => (
+                                    <tr key={ticket.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="flex items-center">
+                                                <Hash className="h-4 w-4 text-slate-400 mr-2" />
+                                                <span className="text-sm font-mono text-slate-900 dark:text-white">
+                                                        {ticket.id.slice(-8)}
+                                                    </span>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="flex items-center">
+                                                <Mail className="h-4 w-4 text-slate-400 mr-2" />
+                                                <span className="text-sm text-slate-600 dark:text-slate-300">
+                                                        {ticket.clientEmail}
+                                                    </span>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            {renderStatus(ticket.status)}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            {renderResult(ticket.result)}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="flex items-center text-sm text-slate-600 dark:text-slate-300">
+                                                <Camera className="h-4 w-4 mr-1" />
+                                                {ticket._count.images}
+                                                {ticket._count.requests > 0 && (
+                                                    <span className="ml-2 text-orange-500">
+                                                            (+{ticket._count.requests} запрос)
+                                                        </span>
                                                 )}
-                                            </td>
-
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <div className="flex items-center space-x-2">
-                                                    <div className="flex -space-x-2">
-                                                        {ticket.images.slice(0, 3).map((image, idx) => (
-                                                            <img
-                                                                key={image.id}
-                                                                src={image.url}
-                                                                alt={`Photo ${idx + 1}`}
-                                                                className="h-8 w-8 rounded-full border-2 border-white dark:border-slate-800 object-cover"
-                                                            />
-                                                        ))}
-                                                    </div>
-                                                    <span className="text-sm text-slate-600 dark:text-slate-300">
-                              {ticket._count.images}
-                            </span>
-                                                </div>
-                                            </td>
-
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <div className="text-sm text-slate-900 dark:text-white">
-                                                    {formatDate(ticket.createdAt)}
-                                                </div>
-                                            </td>
-
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <Link
-                                                    href={`/dashboard/${ticket.id}`}
-                                                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-                                                >
-                                                    Открыть
-                                                </Link>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="flex items-center text-sm text-slate-600 dark:text-slate-300">
+                                                <Calendar className="h-4 w-4 mr-2" />
+                                                {formatTimeAgo(ticket.createdAt)}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <Link
+                                                href={`/dashboard/${ticket.id}`}
+                                                className="inline-flex items-center px-3 py-1.5 bg-blue-100 hover:bg-blue-200 dark:bg-blue-900 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 text-sm font-medium rounded-lg transition-colors"
+                                            >
+                                                <Eye className="h-4 w-4 mr-1" />
+                                                Открыть
+                                            </Link>
+                                        </td>
+                                    </tr>
+                                ))}
                                 </tbody>
                             </table>
                         </div>
                     )}
                 </div>
+
+                {/* Real-time status indicator */}
+                {refreshing && (
+                    <div className="fixed bottom-4 right-4 bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg flex items-center space-x-2 z-50">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Обновление данных...</span>
+                    </div>
+                )}
             </div>
         </div>
-    );
+    )
 }

@@ -1,8 +1,8 @@
-// src/app/dashboard/[id]/page.tsx
+// src/app/dashboard/[id]/page.tsx - Полная версия с PDF интеграцией
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { ArrowLeft, CheckCircle, XCircle, Camera, Eye, Calendar, Mail, Hash, Download, AlertCircle, Clock, Loader2 } from 'lucide-react'
+import { ArrowLeft, CheckCircle, XCircle, Camera, Eye, Calendar, Mail, Hash, Download, AlertCircle, Clock, Loader2, Send } from 'lucide-react'
 import Link from 'next/link'
 
 interface Image {
@@ -65,15 +65,18 @@ const statusConfig = {
 const resultConfig = {
     AUTHENTIC: {
         label: 'Подлинная',
-        color: 'text-green-600 dark:text-green-400'
+        color: 'text-green-600 dark:text-green-400',
+        icon: CheckCircle
     },
     FAKE: {
         label: 'Подделка',
-        color: 'text-red-600 dark:text-red-400'
+        color: 'text-red-600 dark:text-red-400',
+        icon: XCircle
     }
 }
 
-export default function TicketDetailPage({ params }: { params: { id: string } }) {
+// ИСПРАВЛЕНИЕ: params теперь Promise в Next.js 15
+export default function TicketDetailPage({ params }: { params: Promise<{ id: string }> }) {
     const [ticket, setTicket] = useState<Ticket | null>(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -81,15 +84,30 @@ export default function TicketDetailPage({ params }: { params: { id: string } })
     const [comment, setComment] = useState('')
     const [photoRequest, setPhotoRequest] = useState('')
     const [isProcessing, setIsProcessing] = useState(false)
+    const [ticketId, setTicketId] = useState<string | null>(null)
 
+    // Разворачиваем Promise params
     useEffect(() => {
-        fetchTicket()
-    }, [params.id])
+        const initParams = async () => {
+            const resolvedParams = await params
+            setTicketId(resolvedParams.id)
+        }
+        initParams()
+    }, [params])
+
+    // Загружаем данные только после получения ID
+    useEffect(() => {
+        if (ticketId) {
+            fetchTicket()
+        }
+    }, [ticketId])
 
     const fetchTicket = async () => {
+        if (!ticketId) return
+
         try {
             setLoading(true)
-            const response = await fetch(`/api/tickets/${params.id}`)
+            const response = await fetch(`/api/tickets/${ticketId}`)
             const data = await response.json()
 
             if (data.success) {
@@ -104,6 +122,7 @@ export default function TicketDetailPage({ params }: { params: { id: string } })
         }
     }
 
+    // Обновленная функция с PDF интеграцией
     const handleDecision = async (result: 'AUTHENTIC' | 'FAKE') => {
         if (!comment.trim()) {
             alert('Пожалуйста, добавьте комментарий к решению')
@@ -112,28 +131,46 @@ export default function TicketDetailPage({ params }: { params: { id: string } })
 
         setIsProcessing(true)
         try {
-            const response = await fetch(`/api/tickets/${params.id}`, {
-                method: 'PATCH',
+            console.log(`🏁 Отправляем решение: ${result}`)
+
+            const response = await fetch(`/api/tickets/${ticketId}/complete`, {
+                method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    status: 'COMPLETED',
                     result,
-                    comment
+                    comment,
+                    expertName: 'BagCheck Expert',
+                    brandName: 'Designer Bag',
+                    itemType: 'Сумка'
                 })
             })
 
             const data = await response.json()
 
             if (data.success) {
+                // Обновляем локальное состояние тикета
                 setTicket(data.data)
-                alert(`Решение "${result === 'AUTHENTIC' ? 'Подлинная' : 'Подделка'}" успешно сохранено`)
+
+                // Показываем успешное сообщение
+                alert(data.message)
+
+                // Очищаем комментарий
+                setComment('')
+
             } else {
                 alert(data.error || 'Ошибка при сохранении решения')
+
+                if (data.warning) {
+                    console.warn('⚠️ Предупреждение:', data.warning)
+                    setTimeout(() => alert(`Внимание: ${data.warning}`), 500)
+                }
             }
+
         } catch (err) {
-            alert('Ошибка при отправке данных')
+            console.error('❌ Ошибка при отправке решения:', err)
+            alert('Ошибка при отправке данных на сервер')
         } finally {
             setIsProcessing(false)
         }
@@ -147,8 +184,7 @@ export default function TicketDetailPage({ params }: { params: { id: string } })
 
         setIsProcessing(true)
         try {
-            // Здесь нужно будет адаптировать под ваш API
-            const response = await fetch(`/api/tickets/${params.id}/photo-request`, {
+            const response = await fetch(`/api/tickets/${ticketId}/photo-request`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -191,9 +227,9 @@ export default function TicketDetailPage({ params }: { params: { id: string } })
         const Icon = config.icon
         return (
             <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${config.color}`}>
-        <Icon className="h-3 w-3 mr-1" />
+                <Icon className="h-3 w-3 mr-1" />
                 {config.label}
-      </span>
+            </span>
         )
     }
 
@@ -240,28 +276,16 @@ export default function TicketDetailPage({ params }: { params: { id: string } })
                                 <ArrowLeft className="w-5 h-5 text-slate-600 dark:text-slate-300" />
                             </Link>
                             <div>
-                                <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-                                    Заявка {ticket.id.slice(0, 8)}...
+                                <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
+                                    Тикет #{ticket.id.slice(-8)}
                                 </h1>
-                                <p className="text-sm text-slate-500 dark:text-slate-400">
-                                    Проверка подлинности дизайнерской сумки
+                                <p className="text-sm text-slate-600 dark:text-slate-300">
+                                    {ticket.clientEmail}
                                 </p>
                             </div>
                         </div>
-
-                        <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-3">
                             {getStatusBadge(ticket.status)}
-                            {ticket.certificate && (
-                                <a
-                                    href={ticket.certificate.pdfUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="p-2 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
-                                    title="Скачать сертификат"
-                                >
-                                    <Download className="w-5 h-5 text-slate-600 dark:text-slate-300" />
-                                </a>
-                            )}
                         </div>
                     </div>
                 </div>
@@ -269,181 +293,107 @@ export default function TicketDetailPage({ params }: { params: { id: string } })
 
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-                    {/* Левая колонка - Информация о заявке */}
-                    <div className="lg:col-span-1 space-y-6">
-
-                        {/* Основная информация */}
+                    {/* Левая колонка - Детали тикета */}
+                    <div className="lg:col-span-2 space-y-6">
+                        {/* Информация о тикете */}
                         <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-                            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+                            <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
                                 Информация о заявке
-                            </h3>
-
-                            <div className="space-y-4">
-                                <div className="flex items-center text-sm">
+                            </h2>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="flex items-center">
                                     <Hash className="w-4 h-4 text-slate-400 mr-3" />
-                                    <span className="text-slate-600 dark:text-slate-300">ID:</span>
-                                    <span className="ml-2 font-mono text-slate-900 dark:text-white">
-                    {ticket.id}
-                  </span>
-                                </div>
-
-                                <div className="flex items-center text-sm">
-                                    <Mail className="w-4 h-4 text-slate-400 mr-3" />
-                                    <span className="text-slate-600 dark:text-slate-300">Клиент:</span>
-                                    <span className="ml-2 text-slate-900 dark:text-white">
-                    {ticket.clientEmail}
-                  </span>
-                                </div>
-
-                                <div className="flex items-center text-sm">
-                                    <Calendar className="w-4 h-4 text-slate-400 mr-3" />
-                                    <span className="text-slate-600 dark:text-slate-300">Создана:</span>
-                                    <span className="ml-2 text-slate-900 dark:text-white">
-                    {formatDate(ticket.createdAt)}
-                  </span>
-                                </div>
-
-                                {ticket.result && (
-                                    <div className="flex items-center text-sm">
-                                        <CheckCircle className="w-4 h-4 text-slate-400 mr-3" />
-                                        <span className="text-slate-600 dark:text-slate-300">Результат:</span>
-                                        <span className={`ml-2 font-medium ${resultConfig[ticket.result].color}`}>
-                      {resultConfig[ticket.result].label}
-                    </span>
+                                    <div>
+                                        <p className="text-sm text-slate-600 dark:text-slate-300">ID тикета</p>
+                                        <p className="font-mono text-slate-900 dark:text-white">{ticket.id}</p>
                                     </div>
-                                )}
+                                </div>
+                                <div className="flex items-center">
+                                    <Mail className="w-4 h-4 text-slate-400 mr-3" />
+                                    <div>
+                                        <p className="text-sm text-slate-600 dark:text-slate-300">Email клиента</p>
+                                        <p className="text-slate-900 dark:text-white">{ticket.clientEmail}</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center">
+                                    <Calendar className="w-4 h-4 text-slate-400 mr-3" />
+                                    <div>
+                                        <p className="text-sm text-slate-600 dark:text-slate-300">Создан</p>
+                                        <p className="text-slate-900 dark:text-white">{formatDate(ticket.createdAt)}</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center">
+                                    <Camera className="w-4 h-4 text-slate-400 mr-3" />
+                                    <div>
+                                        <p className="text-sm text-slate-600 dark:text-slate-300">Фотографии</p>
+                                        <p className="text-slate-900 dark:text-white">{ticket.images.length} шт</p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
-                        {/* Запросы дополнительных фото */}
-                        {ticket.requests.length > 0 && (
-                            <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-                                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
-                                    Запросы дополнительных фото
-                                </h3>
-
-                                <div className="space-y-3">
-                                    {ticket.requests.map((request) => (
-                                        <div key={request.id} className="p-3 bg-slate-50 dark:bg-slate-700 rounded-lg">
-                                            <p className="text-sm text-slate-700 dark:text-slate-300 mb-2">
-                                                {request.description}
-                                            </p>
-                                            <div className="flex items-center justify-between">
-                        <span className="text-xs text-slate-500 dark:text-slate-400">
-                          {formatDate(request.createdAt)}
-                        </span>
-                                                <span className={`px-2 py-1 rounded text-xs ${
-                                                    request.status === 'PENDING'
-                                                        ? 'bg-yellow-100 text-yellow-800'
-                                                        : 'bg-green-100 text-green-800'
-                                                }`}>
-                          {request.status === 'PENDING' ? 'Ожидает' : 'Выполнен'}
-                        </span>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Новый запрос фото - только если статус не COMPLETED */}
-                        {ticket.status !== 'COMPLETED' && (
-                            <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-                                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
-                                    Запросить дополнительные фото
-                                </h3>
-
-                                <div className="space-y-4">
-                  <textarea
-                      value={photoRequest}
-                      onChange={(e) => setPhotoRequest(e.target.value)}
-                      placeholder="Опишите, какие дополнительные фотографии нужны для экспертизы..."
-                      className="w-full p-3 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder-slate-500 dark:placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
-                      rows={3}
-                  />
-
-                                    <button
-                                        onClick={handlePhotoRequest}
-                                        disabled={isProcessing || !photoRequest.trim()}
-                                        className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                                    >
-                                        {isProcessing ? (
-                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                        ) : (
-                                            <Camera className="w-4 h-4 mr-2" />
-                                        )}
-                                        {isProcessing ? 'Отправка...' : 'Отправить запрос'}
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Правая колонка - Фотографии и решение */}
-                    <div className="lg:col-span-2 space-y-6">
-
-                        {/* Галерея фотографий */}
+                        {/* Фотографии */}
                         <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-                            <div className="flex items-center justify-between mb-6">
-                                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
-                                    Фотографии сумки ({ticket.images.length})
-                                </h3>
-                                {selectedImage && (
-                                    <button
-                                        onClick={() => setSelectedImage(null)}
-                                        className="flex items-center text-sm text-blue-600 hover:text-blue-700"
-                                    >
-                                        <Eye className="w-4 h-4 mr-1" />
-                                        Свернуть просмотр
-                                    </button>
-                                )}
-                            </div>
-
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+                            <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+                                Фотографии ({ticket.images.length})
+                            </h2>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                                 {ticket.images.map((image) => (
                                     <div
                                         key={image.id}
-                                        className="relative group cursor-pointer"
-                                        onClick={() => setSelectedImage(selectedImage?.id === image.id ? null : image)}
+                                        className="aspect-square bg-slate-100 dark:bg-slate-700 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all"
+                                        onClick={() => setSelectedImage(image)}
                                     >
                                         <img
                                             src={image.url}
-                                            alt={`Фото ${image.type === 'INITIAL' ? 'изначальное' : 'дополнительное'}`}
-                                            className="w-full h-32 object-cover rounded-lg border border-slate-200 dark:border-slate-600 transition-transform group-hover:scale-105"
+                                            alt={`Фото ${image.type}`}
+                                            className="w-full h-full object-cover"
                                         />
-                                        <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 rounded-lg" />
-                                        <div className="absolute bottom-2 left-2 right-2">
-                      <span className={`text-xs px-2 py-1 rounded ${
-                          image.type === 'INITIAL'
-                              ? 'bg-blue-500 text-white'
-                              : 'bg-orange-500 text-white'
-                      }`}>
-                        {image.type === 'INITIAL' ? 'Основное' : 'Доп.'}
-                      </span>
+                                        <div className="absolute bottom-2 left-2">
+                                            <span className={`text-xs px-2 py-1 rounded text-white ${
+                                                image.type === 'INITIAL' ? 'bg-blue-600' : 'bg-orange-600'
+                                            }`}>
+                                                {image.type === 'INITIAL' ? 'Основное' : 'Доп.'}
+                                            </span>
                                         </div>
                                     </div>
                                 ))}
                             </div>
 
-                            {/* Увеличенное изображение */}
+                            {/* Модалка для просмотра изображения */}
                             {selectedImage && (
-                                <div className="mb-6">
-                                    <div className="relative">
-                                        <img
-                                            src={selectedImage.url}
-                                            alt="Увеличенное фото"
-                                            className="w-full max-h-96 object-contain bg-slate-100 dark:bg-slate-700 rounded-lg"
-                                        />
+                                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                                    <div className="bg-white dark:bg-slate-800 rounded-xl max-w-4xl max-h-[90vh] overflow-hidden">
+                                        <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                                            <h3 className="text-lg font-medium text-slate-900 dark:text-white">
+                                                Просмотр фотографии
+                                            </h3>
+                                            <button
+                                                onClick={() => setSelectedImage(null)}
+                                                className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                                            >
+                                                <XCircle className="w-6 h-6" />
+                                            </button>
+                                        </div>
+                                        <div className="p-4">
+                                            <img
+                                                src={selectedImage.url}
+                                                alt="Увеличенное фото"
+                                                className="max-w-full max-h-[60vh] object-contain mx-auto"
+                                            />
+                                            <p className="text-sm text-slate-600 dark:text-slate-300 mt-4 text-center">
+                                                {selectedImage.type === 'INITIAL' ? 'Изначальное фото' : 'Дополнительное фото'} •
+                                                Загружено: {formatDate(selectedImage.uploadedAt)}
+                                            </p>
+                                        </div>
                                     </div>
-                                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-2 text-center">
-                                        {selectedImage.type === 'INITIAL' ? 'Изначальное фото' : 'Дополнительное фото'} •
-                                        Загружено: {formatDate(selectedImage.uploadedAt)}
-                                    </p>
                                 </div>
                             )}
                         </div>
+                    </div>
 
+                    {/* Правая колонка - Экспертное заключение */}
+                    <div className="space-y-6">
                         {/* Экспертное заключение - только если статус не COMPLETED */}
                         {ticket.status !== 'COMPLETED' ? (
                             <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
@@ -502,56 +452,147 @@ export default function TicketDetailPage({ params }: { params: { id: string } })
                             </div>
                         ) : (
                             /* Показываем результат если заявка завершена */
-                            <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
-                                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-6">
-                                    Экспертное заключение
-                                </h3>
+                        <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+                            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-6">
+                                Экспертное заключение
+                            </h3>
 
-                                <div className="space-y-4">
-                                    <div className="flex items-center">
-                    <span className="text-sm font-medium text-slate-600 dark:text-slate-300 mr-3">
-                      Результат:
-                    </span>
-                                        <span className={`text-lg font-bold ${ticket.result ? resultConfig[ticket.result].color : ''}`}>
-                      {ticket.result ? resultConfig[ticket.result].label : 'Не определен'}
-                    </span>
-                                    </div>
+                            <div className="space-y-4">
+                                {/* Результат проверки */}
+                                <div className="flex items-center justify-between">
+                                        <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
+                                            Результат:
+                                        </span>
+                                    <span className={`text-lg font-bold ${ticket.result ? resultConfig[ticket.result].color : ''}`}>
+                                            {ticket.result ? resultConfig[ticket.result].label : 'Не определен'}
+                                        </span>
+                                </div>
 
-                                    {ticket.comment && (
-                                        <div>
-                                            <h4 className="text-sm font-medium text-slate-600 dark:text-slate-300 mb-2">
+                                {/* Комментарий эксперта */}
+                                {ticket.comment && (
+                                    <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
+                                            <span className="text-sm font-medium text-slate-600 dark:text-slate-300 block mb-2">
                                                 Комментарий эксперта:
-                                            </h4>
-                                            <div className="p-4 bg-slate-50 dark:bg-slate-700 rounded-lg">
-                                                <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
-                                                    {ticket.comment}
-                                                </p>
-                                            </div>
-                                        </div>
-                                    )}
+                                            </span>
+                                        <p className="text-slate-900 dark:text-white leading-relaxed">
+                                            {ticket.comment}
+                                        </p>
+                                    </div>
+                                )}
 
-                                    {ticket.certificate && (
-                                        <div className="mt-6 p-4 border border-green-200 dark:border-green-700 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                                            <div className="flex items-center justify-between">
-                                                <div>
-                                                    <h4 className="text-sm font-medium text-green-800 dark:text-green-400">
-                                                        Сертификат готов
-                                                    </h4>
-                                                    <p className="text-xs text-green-600 dark:text-green-500">
-                                                        Выдан: {formatDate(ticket.certificate.createdAt)}
-                                                    </p>
-                                                </div>
-                                                <a
-                                                    href={ticket.certificate.pdfUrl}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                    className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
-                                                >
-                                                    Скачать PDF
-                                                </a>
-                                            </div>
+                                {/* Информация об отправке */}
+                                <div className={`mt-4 p-4 rounded-lg border ${
+                                    ticket.result === 'AUTHENTIC'
+                                        ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                                        : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800'
+                                }`}>
+                                    <div className="flex items-center">
+                                        <Mail className={`w-5 h-5 mr-2 ${
+                                            ticket.result === 'AUTHENTIC'
+                                                ? 'text-green-600 dark:text-green-400'
+                                                : 'text-orange-600 dark:text-orange-400'
+                                        }`} />
+                                        <div>
+                                            <p className={`text-sm font-medium ${
+                                                ticket.result === 'AUTHENTIC'
+                                                    ? 'text-green-800 dark:text-green-200'
+                                                    : 'text-orange-800 dark:text-orange-200'
+                                            }`}>
+                                                {ticket.result === 'AUTHENTIC'
+                                                    ? 'PDF сертификат отправлен на email'
+                                                    : 'Уведомление отправлено на email'
+                                                }
+                                            </p>
+                                            <p className={`text-xs ${
+                                                ticket.result === 'AUTHENTIC'
+                                                    ? 'text-green-600 dark:text-green-300'
+                                                    : 'text-orange-600 dark:text-orange-300'
+                                            }`}>
+                                                Адрес: {ticket.clientEmail}
+                                            </p>
                                         </div>
-                                    )}
+                                    </div>
+                                </div>
+
+                                {/* QR код для верификации (только для подлинных) */}
+                                {ticket.result === 'AUTHENTIC' && ticket.certificate && (
+                                    <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
+                                            <span className="text-sm font-medium text-slate-600 dark:text-slate-300 block mb-2">
+                                                QR код для верификации:
+                                            </span>
+                                        <div className="flex items-center space-x-3">
+                                            <code className="text-sm bg-slate-100 dark:bg-slate-700 px-3 py-1 rounded">
+                                                {ticket.certificate.qrCode}
+                                            </code>
+                                            <button
+                                                onClick={() => window.open(`/verify/${ticket.certificate?.qrCode}`, '_blank')}
+                                                className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+                                            >
+                                                Проверить →
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        )}
+
+                        {/* Запрос дополнительных фото - только если статус позволяет */}
+                        {(ticket.status === 'PENDING' || ticket.status === 'IN_REVIEW') && (
+                            <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+                                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+                                    Запросить дополнительные фото
+                                </h3>
+                                <div className="space-y-4">
+                                    <textarea
+                                        value={photoRequest}
+                                        onChange={(e) => setPhotoRequest(e.target.value)}
+                                        placeholder="Опишите какие дополнительные фотографии нужны..."
+                                        className="w-full p-3 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder-slate-500 dark:placeholder-slate-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+                                        rows={3}
+                                    />
+                                    <button
+                                        onClick={handlePhotoRequest}
+                                        disabled={isProcessing || !photoRequest.trim()}
+                                        className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                                    >
+                                        {isProcessing ? (
+                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                        ) : (
+                                            <Send className="w-4 h-4 mr-2" />
+                                        )}
+                                        {isProcessing ? 'Отправка...' : 'Отправить запрос'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* История запросов фото */}
+                        {ticket.requests.length > 0 && (
+                            <div className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-200 dark:border-slate-700">
+                                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+                                    История запросов
+                                </h3>
+                                <div className="space-y-3">
+                                    {ticket.requests.map((request) => (
+                                        <div key={request.id} className="p-3 bg-slate-50 dark:bg-slate-700 rounded-lg">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className={`text-xs px-2 py-1 rounded ${
+                                                    request.status === 'FULFILLED'
+                                                        ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                                                        : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                                                }`}>
+                                                    {request.status === 'FULFILLED' ? 'Выполнен' : 'Ожидает'}
+                                                </span>
+                                                <span className="text-xs text-slate-500 dark:text-slate-400">
+                                                    {formatDate(request.createdAt)}
+                                                </span>
+                                            </div>
+                                            <p className="text-sm text-slate-700 dark:text-slate-300">
+                                                {request.description}
+                                            </p>
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
                         )}

@@ -1,4 +1,4 @@
-// src/lib/services/email.ts - Упрощенная версия (только клиентам)
+// src/lib/services/email.ts - Обновленная версия для PDF
 import * as nodemailer from 'nodemailer'
 import { PDFCertificateGenerator, CertificateData } from '@/lib/pdf-generator'
 
@@ -13,7 +13,7 @@ export class EmailService {
         }
     })
 
-    // === СЦЕНАРИЙ 1: Отправка сертификата для подлинной сумки ===
+    // === СЦЕНАРИЙ 1: Отправка PDF сертификата для подлинной сумки ===
     static async sendAuthenticCertificate(params: {
         ticketId: string
         clientEmail: string    // 👈 Email клиента из БД
@@ -25,12 +25,13 @@ export class EmailService {
         qrCode: string
     }): Promise<void> {
         try {
-            console.log('📧 Отправляем сертификат подлинности:')
+            console.log('📧 Отправляем PDF сертификат подлинности:')
             console.log('   - От:', process.env.SMTP_USER)
             console.log('   - Клиенту:', params.clientEmail)
             console.log('   - Тикет:', params.ticketId)
+            console.log('   - QR код:', params.qrCode)
 
-            // Генерируем HTML сертификат
+            // Генерируем PDF сертификат с правильными данными
             const certificateData: CertificateData = {
                 ticketId: params.ticketId,
                 clientEmail: params.clientEmail,
@@ -40,10 +41,12 @@ export class EmailService {
                 itemType: params.itemType,
                 checkDate: params.checkDate,
                 expertName: params.expertName,
-                qrCode: params.qrCode
+                qrCode: params.qrCode  // ✅ Передаем QR код
             }
 
+            console.log('🔄 Генерируем PDF сертификат...')
             const certificateBuffer = await PDFCertificateGenerator.generateCertificate(certificateData)
+            console.log('✅ PDF сертификат сгенерирован, размер:', certificateBuffer.length, 'байт')
 
             const mailOptions = {
                 from: `"BagCheck - Аутентификация сумок" <${process.env.SMTP_USER}>`,
@@ -52,18 +55,18 @@ export class EmailService {
                 html: this.generateAuthenticEmailHTML(params),
                 attachments: [
                     {
-                        filename: `certificate-${params.ticketId}.html`,
+                        filename: `certificate-${params.ticketId}.pdf`,
                         content: certificateBuffer,
-                        contentType: 'text/html'
+                        contentType: 'application/pdf'  // ✅ Правильный MIME тип
                     }
                 ]
             }
 
             const info = await this.transporter.sendMail(mailOptions)
-            console.log('✅ Сертификат подлинности отправлен:', info.messageId)
+            console.log('✅ PDF сертификат отправлен:', info.messageId)
 
         } catch (error) {
-            console.error('❌ Ошибка отправки сертификата:', error)
+            console.error('❌ Ошибка отправки PDF сертификата:', error)
             throw new Error(`Не удалось отправить сертификат на email ${params.clientEmail}`)
         }
     }
@@ -115,7 +118,7 @@ export class EmailService {
                 from: `"BagCheck - Аутентификация сумок" <${process.env.SMTP_USER}>`,
                 to: params.clientEmail,
                 subject: `📸 Нужны дополнительные фотографии - ${params.ticketId}`,
-                html: this.generatePhotoRequestEmailHTML(params)
+                html: this.generatePhotoRequestHTML(params)
             }
 
             const info = await this.transporter.sendMail(mailOptions)
@@ -129,49 +132,63 @@ export class EmailService {
 
     // === HTML ШАБЛОНЫ ===
 
-    private static generateAuthenticEmailHTML(params: {
-        ticketId: string
-        comment: string
-        brandName: string
-        itemType: string
-        checkDate: Date
-        expertName: string
-        qrCode: string
-    }): string {
+    private static generateAuthenticEmailHTML(params: any): string {
         return `
         <!DOCTYPE html>
-        <html lang="ru">
+        <html>
         <head>
-            <meta charset="UTF-8">
+            <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Сертификат подлинности BagCheck</title>
-            ${this.getEmailStyles()}
+            <title>Ваша сумка подлинная!</title>
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background-color: #f8fafc; }
+                .container { max-width: 600px; margin: 40px auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+                .header { background: linear-gradient(135deg, #059669, #10b981); color: white; padding: 40px 30px; text-align: center; }
+                .header h1 { margin: 0; font-size: 28px; font-weight: bold; }
+                .header p { margin: 10px 0 0; opacity: 0.9; font-size: 16px; }
+                .content { padding: 40px 30px; }
+                .success-badge { background: #f0fdf4; border: 2px solid #059669; color: #059669; padding: 15px 20px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 18px; margin-bottom: 30px; }
+                .details { background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0; }
+                .detail-row { display: flex; justify-content: space-between; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #e2e8f0; }
+                .detail-row:last-child { border-bottom: none; margin-bottom: 0; }
+                .detail-label { font-weight: 600; color: #64748b; }
+                .detail-value { color: #334155; }
+                .comment { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 20px; border-radius: 0 8px 8px 0; margin: 20px 0; }
+                .comment h3 { margin: 0 0 10px; color: #92400e; font-size: 16px; }
+                .comment p { margin: 0; color: #451a03; line-height: 1.6; }
+                .attachment-info { background: #f0f9ff; border: 1px solid #0ea5e9; color: #0c4a6e; padding: 15px; border-radius: 8px; margin: 20px 0; text-align: center; }
+                .footer { background: #f8fafc; padding: 30px; text-align: center; color: #64748b; font-size: 14px; }
+                .button { display: inline-block; background: #059669; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 20px 0; }
+            </style>
         </head>
         <body>
             <div class="container">
                 <div class="header">
-                    <div class="logo">🛡️ BagCheck</div>
-                    <div>Профессиональная аутентификация</div>
+                    <h1>🎉 Поздравляем!</h1>
+                    <p>Ваша сумка прошла проверку и является подлинной</p>
                 </div>
                 
                 <div class="content">
-                    <h2>Отличная новость! 🎉</h2>
-                    
-                    <div class="result-box authentic">
-                        <div class="result-text">✅ Ваша сумка подлинная!</div>
-                        <div class="result-subtext">${params.brandName} • ${params.itemType}</div>
+                    <div class="success-badge">
+                        ✅ ТОВАР ПОДЛИННЫЙ
                     </div>
-                    
-                    <p>Наши эксперты завершили проверку и подтвердили подлинность вашего товара.</p>
                     
                     <div class="details">
                         <div class="detail-row">
-                            <span class="detail-label">Номер заявки:</span>
+                            <span class="detail-label">Заявка:</span>
                             <span class="detail-value">${params.ticketId}</span>
                         </div>
                         <div class="detail-row">
+                            <span class="detail-label">Бренд:</span>
+                            <span class="detail-value">${params.brandName}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Изделие:</span>
+                            <span class="detail-value">${params.itemType}</span>
+                        </div>
+                        <div class="detail-row">
                             <span class="detail-label">Дата проверки:</span>
-                            <span class="detail-value">${this.formatDate(params.checkDate)}</span>
+                            <span class="detail-value">${params.checkDate.toLocaleDateString('ru-RU')}</span>
                         </div>
                         <div class="detail-row">
                             <span class="detail-label">Эксперт:</span>
@@ -180,79 +197,83 @@ export class EmailService {
                     </div>
                     
                     ${params.comment ? `
-                        <div class="comment-section">
-                            <strong>Комментарий эксперта:</strong><br>
-                            ${params.comment}
-                        </div>
+                    <div class="comment">
+                        <h3>Комментарий эксперта:</h3>
+                        <p>${params.comment}</p>
+                    </div>
                     ` : ''}
                     
-                    <div class="certificate-info">
-                        <h3>📜 Ваш сертификат подлинности</h3>
-                        <p>К этому письму прикреплен официальный сертификат подлинности. Вы можете:</p>
-                        <ul>
-                            <li>Открыть сертификат в любом браузере</li>
-                            <li>Распечатать для ваших записей</li>
-                            <li>Использовать QR код для верификации</li>
-                        </ul>
-                        <p><strong>Ссылка для верификации:</strong> 
-                           <a href="${process.env.NEXT_PUBLIC_APP_URL}/verify/${params.qrCode}">
-                               ${process.env.NEXT_PUBLIC_APP_URL}/verify/${params.qrCode}
-                           </a>
-                        </p>
+                    <div class="attachment-info">
+                        📎 <strong>К письму прикреплен официальный PDF сертификат</strong><br>
+                        Вы можете сохранить его и использовать для подтверждения подлинности товара
                     </div>
-                    
-                    <p>Спасибо за использование BagCheck! 💙</p>
                 </div>
                 
-                ${this.getEmailFooter()}
+                <div class="footer">
+                    <p>Спасибо за использование BagCheck!</p>
+                    <p>Если у вас есть вопросы, свяжитесь с нами: support@bagcheck.ru</p>
+                </div>
             </div>
         </body>
         </html>
         `
     }
 
-    private static generateFakeEmailHTML(params: {
-        ticketId: string
-        comment: string
-        brandName: string
-        itemType: string
-        checkDate: Date
-        expertName: string
-    }): string {
+    private static generateFakeEmailHTML(params: any): string {
         return `
         <!DOCTYPE html>
-        <html lang="ru">
+        <html>
         <head>
-            <meta charset="UTF-8">
+            <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Результат проверки BagCheck</title>
-            ${this.getEmailStyles()}
+            <title>Результат проверки</title>
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background-color: #f8fafc; }
+                .container { max-width: 600px; margin: 40px auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+                .header { background: linear-gradient(135deg, #dc2626, #ef4444); color: white; padding: 40px 30px; text-align: center; }
+                .header h1 { margin: 0; font-size: 28px; font-weight: bold; }
+                .header p { margin: 10px 0 0; opacity: 0.9; font-size: 16px; }
+                .content { padding: 40px 30px; }
+                .fake-badge { background: #fef2f2; border: 2px solid #dc2626; color: #dc2626; padding: 15px 20px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 18px; margin-bottom: 30px; }
+                .details { background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0; }
+                .detail-row { display: flex; justify-content: space-between; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #e2e8f0; }
+                .detail-row:last-child { border-bottom: none; margin-bottom: 0; }
+                .detail-label { font-weight: 600; color: #64748b; }
+                .detail-value { color: #334155; }
+                .comment { background: #fef2f2; border-left: 4px solid #dc2626; padding: 20px; border-radius: 0 8px 8px 0; margin: 20px 0; }
+                .comment h3 { margin: 0 0 10px; color: #991b1b; font-size: 16px; }
+                .comment p { margin: 0; color: #7f1d1d; line-height: 1.6; }
+                .footer { background: #f8fafc; padding: 30px; text-align: center; color: #64748b; font-size: 14px; }
+            </style>
         </head>
         <body>
             <div class="container">
                 <div class="header">
-                    <div class="logo">🛡️ BagCheck</div>
-                    <div>Профессиональная аутентификация</div>
+                    <h1>Результат проверки</h1>
+                    <p>К сожалению, товар не прошел проверку на подлинность</p>
                 </div>
                 
                 <div class="content">
-                    <h2>Результат проверки</h2>
-                    
-                    <div class="result-box fake">
-                        <div class="result-text">❌ Товар не является подлинным</div>
-                        <div class="result-subtext">${params.brandName} • ${params.itemType}</div>
+                    <div class="fake-badge">
+                        ❌ ТОВАР НЕ ЯВЛЯЕТСЯ ПОДЛИННЫМ
                     </div>
-                    
-                    <p>К сожалению, наши эксперты определили, что данный товар является подделкой.</p>
                     
                     <div class="details">
                         <div class="detail-row">
-                            <span class="detail-label">Номер заявки:</span>
+                            <span class="detail-label">Заявка:</span>
                             <span class="detail-value">${params.ticketId}</span>
                         </div>
                         <div class="detail-row">
+                            <span class="detail-label">Бренд:</span>
+                            <span class="detail-value">${params.brandName}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Изделие:</span>
+                            <span class="detail-value">${params.itemType}</span>
+                        </div>
+                        <div class="detail-row">
                             <span class="detail-label">Дата проверки:</span>
-                            <span class="detail-value">${this.formatDate(params.checkDate)}</span>
+                            <span class="detail-value">${params.checkDate.toLocaleDateString('ru-RU')}</span>
                         </div>
                         <div class="detail-row">
                             <span class="detail-label">Эксперт:</span>
@@ -260,139 +281,79 @@ export class EmailService {
                         </div>
                     </div>
                     
-                    <div class="comment-section">
-                        <strong>Комментарий эксперта:</strong><br>
-                        ${params.comment}
+                    <div class="comment">
+                        <h3>Причины отклонения:</h3>
+                        <p>${params.comment}</p>
                     </div>
-                    
-                    <div style="background: #fffbeb; padding: 20px; border-radius: 8px; border-left: 4px solid #f59e0b; margin: 20px 0;">
-                        <h3 style="color: #92400e; margin-bottom: 10px;">ℹ️ Что делать дальше?</h3>
-                        <p style="color: #451a03; margin: 0;">
-                            Если у вас есть вопросы по результатам проверки или вы хотите получить консультацию, 
-                            пожалуйста, свяжитесь с нами по email.
-                        </p>
-                    </div>
-                    
-                    <p>Спасибо за использование BagCheck.</p>
                 </div>
                 
-                ${this.getEmailFooter()}
+                <div class="footer">
+                    <p>Если у вас есть вопросы по результату проверки, свяжитесь с нами: support@bagcheck.ru</p>
+                </div>
             </div>
         </body>
         </html>
         `
     }
 
-    private static generatePhotoRequestEmailHTML(params: {
-        ticketId: string
-        description: string
-        uploadUrl: string
-    }): string {
+    private static generatePhotoRequestHTML(params: any): string {
         return `
         <!DOCTYPE html>
-        <html lang="ru">
+        <html>
         <head>
-            <meta charset="UTF-8">
+            <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Запрос дополнительных фото BagCheck</title>
-            ${this.getEmailStyles()}
+            <title>Нужны дополнительные фотографии</title>
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background-color: #f8fafc; }
+                .container { max-width: 600px; margin: 40px auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
+                .header { background: linear-gradient(135deg, #f59e0b, #fbbf24); color: white; padding: 40px 30px; text-align: center; }
+                .header h1 { margin: 0; font-size: 28px; font-weight: bold; }
+                .header p { margin: 10px 0 0; opacity: 0.9; font-size: 16px; }
+                .content { padding: 40px 30px; }
+                .request-badge { background: #fffbeb; border: 2px solid #f59e0b; color: #f59e0b; padding: 15px 20px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 18px; margin-bottom: 30px; }
+                .request-details { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 20px; border-radius: 0 8px 8px 0; margin: 20px 0; }
+                .request-details h3 { margin: 0 0 10px; color: #92400e; font-size: 16px; }
+                .request-details p { margin: 0; color: #451a03; line-height: 1.6; }
+                .button { display: inline-block; background: #f59e0b; color: white; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: 600; margin: 20px 0; text-align: center; }
+                .footer { background: #f8fafc; padding: 30px; text-align: center; color: #64748b; font-size: 14px; }
+            </style>
         </head>
         <body>
             <div class="container">
                 <div class="header">
-                    <div class="logo">🛡️ BagCheck</div>
-                    <div>Профессиональная аутентификация</div>
+                    <h1>📸 Дополнительные фото</h1>
+                    <p>Для завершения проверки нам нужны дополнительные фотографии</p>
                 </div>
                 
                 <div class="content">
-                    <h2>Нужны дополнительные фотографии 📸</h2>
-                    
-                    <p>Для завершения проверки подлинности вашего товара нашему эксперту требуются дополнительные фотографии.</p>
-                    
-                    <div class="details">
-                        <div class="detail-row">
-                            <span class="detail-label">Номер заявки:</span>
-                            <span class="detail-value">${params.ticketId}</span>
-                        </div>
+                    <div class="request-badge">
+                        ⏳ НУЖНЫ ДОПОЛНИТЕЛЬНЫЕ ФОТО
                     </div>
                     
-                    <div class="comment-section">
-                        <strong>Что нужно сфотографировать:</strong><br>
-                        ${params.description}
+                    <p>Здравствуйте!</p>
+                    <p>Для проведения более тщательной проверки подлинности вашего товара (заявка <strong>${params.ticketId}</strong>) нашему эксперту требуются дополнительные фотографии.</p>
+                    
+                    <div class="request-details">
+                        <h3>Что нужно сфотографировать:</h3>
+                        <p>${params.description}</p>
                     </div>
                     
-                    <div class="upload-section">
-                        <h3>📤 Загрузите дополнительные фото</h3>
-                        <p>Нажмите на кнопку ниже, чтобы перейти на страницу загрузки:</p>
-                        <div style="text-align: center; margin: 30px 0;">
-                            <a href="${params.uploadUrl}" class="upload-button">
-                                Загрузить фотографии
-                            </a>
-                        </div>
-                        <p style="font-size: 14px; color: #64748b;">
-                            Или скопируйте ссылку в браузер: <br>
-                            <code style="background: #f1f5f9; padding: 4px 8px; border-radius: 4px;">${params.uploadUrl}</code>
-                        </p>
+                    <div style="text-align: center;">
+                        <a href="${params.uploadUrl}" class="button">
+                            📷 Загрузить дополнительные фото
+                        </a>
                     </div>
                     
-                    <p>После загрузки дополнительных фотографий наш эксперт продолжит проверку и вы получите финальный результат.</p>
-                    
-                    <p>Спасибо за сотрудничество! 💙</p>
+                    <p><strong>После загрузки дополнительных фотографий наш эксперт завершит проверку в течение 24-48 часов.</strong></p>
                 </div>
                 
-                ${this.getEmailFooter()}
+                <div class="footer">
+                    <p>Если у вас есть вопросы, свяжитесь с нами: support@bagcheck.ru</p>
+                </div>
             </div>
         </body>
         </html>
         `
-    }
-
-    // Общие стили и утилиты
-    private static getEmailStyles(): string {
-        return `
-        <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; line-height: 1.6; color: #334155; margin: 0; padding: 20px; background-color: #f8fafc; }
-            .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
-            .header { background: linear-gradient(135deg, #1e40af, #3b82f6); color: white; padding: 30px; text-align: center; }
-            .logo { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
-            .content { padding: 30px; }
-            .result-box { text-align: center; padding: 20px; margin: 20px 0; border-radius: 8px; }
-            .result-box.authentic { background-color: #f0fdf4; border: 2px solid #059669; }
-            .result-box.fake { background-color: #fef2f2; border: 2px solid #dc2626; }
-            .result-text { font-size: 24px; font-weight: bold; margin-bottom: 10px; }
-            .result-box.authentic .result-text { color: #059669; }
-            .result-box.fake .result-text { color: #dc2626; }
-            .result-subtext { font-size: 14px; color: #64748b; }
-            .details { background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0; }
-            .detail-row { display: flex; justify-content: space-between; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #e2e8f0; }
-            .detail-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-            .detail-label { font-weight: 600; color: #64748b; }
-            .detail-value { color: #334155; }
-            .comment-section { background: #fffbeb; padding: 15px; border-radius: 6px; border-left: 4px solid #f59e0b; margin: 20px 0; }
-            .comment-section strong { color: #92400e; }
-            .upload-button { display: inline-block; background: #1e40af; color: white !important; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; }
-            .upload-section { background: #f8fafc; padding: 20px; border-radius: 8px; margin: 20px 0; }
-            .footer { background: #f8fafc; padding: 20px; text-align: center; font-size: 14px; color: #64748b; }
-        </style>
-        `
-    }
-
-    private static getEmailFooter(): string {
-        return `
-        <div class="footer">
-            <p><strong>BagCheck</strong> - профессиональная аутентификация дизайнерских сумок</p>
-            <p>Это автоматическое письмо, отвечать на него не нужно.</p>
-        </div>
-        `
-    }
-
-    private static formatDate(date: Date): string {
-        return date.toLocaleDateString('ru-RU', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        })
     }
 }

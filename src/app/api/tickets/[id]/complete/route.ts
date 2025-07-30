@@ -1,4 +1,4 @@
-// src/app/api/tickets/[id]/complete/route.ts - Полное завершение с 3 сценариями
+// src/app/api/tickets/[id]/complete/route.ts - Упрощенная версия (только email)
 import { NextRequest, NextResponse } from 'next/server'
 import { TicketService } from '@/lib/services/tickets'
 import { EmailService } from '@/lib/services/email'
@@ -9,14 +9,14 @@ type RouteContext = {
     params: Promise<{ id: string }>
 }
 
-// POST /api/tickets/[id]/complete - завершение проверки
+// POST /api/tickets/[id]/complete - завершение проверки с отправкой PDF на email
 export async function POST(
     request: NextRequest,
     context: RouteContext
 ) {
     try {
         const { id } = await context.params
-        const { result, comment, expertName } = await request.json()
+        const { result, comment, expertName, brandName, itemType } = await request.json()
 
         // Валидация
         if (!result || !['AUTHENTIC', 'FAKE'].includes(result)) {
@@ -47,45 +47,41 @@ export async function POST(
         // === СЦЕНАРИЙ 1: СУМКА ПОДЛИННАЯ ===
         if (result === 'AUTHENTIC') {
             try {
-                console.log('✅ Сценарий 1: Сумка подлинная - создаем сертификат')
+                console.log('✅ Сценарий 1: Сумка подлинная - отправляем PDF сертификат')
 
-                // Создаем сертификат в БД (для QR кода)
+                // Создаем запись сертификата в БД (для QR кода и верификации)
                 const certificateData = await CertificateService.create(
                     updatedTicket.id,
-                    'temporary_url' // Временный URL, сертификат не сохраняется
+                    'email_sent' // Помечаем что сертификат отправлен на email
                 )
 
-                // Отправляем email с сертификатом
+                // Отправляем PDF сертификат на email
                 await EmailService.sendAuthenticCertificate({
                     ticketId: updatedTicket.id,
                     clientEmail: updatedTicket.clientEmail,
-                    comment: comment || '',
-                    brandName: 'Designer Bag',
-                    itemType: 'Сумка',
+                    comment: comment || 'Все элементы сумки соответствуют оригинальным стандартам качества бренда.',
+                    brandName: brandName || 'Designer Bag',
+                    itemType: itemType || 'Сумка',
                     checkDate: updatedTicket.updatedAt,
                     expertName: expertName || 'BagCheck Expert',
                     qrCode: certificateData.qrCode
                 })
 
-                return NextResponse.json<ApiResponse>({
-                    success: true,
-                    data: {
-                        ticket: updatedTicket,
-                        certificate: {
-                            qrCode: certificateData.qrCode,
-                            verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL}/verify/${certificateData.qrCode}`
-                        }
-                    },
-                    message: 'Сумка подтверждена как подлинная. Сертификат отправлен на email.'
-                })
-
-            } catch (emailError) {
-                console.error('❌ Ошибка отправки сертификата:', emailError)
+                console.log('✅ PDF сертификат отправлен на email:', updatedTicket.clientEmail)
 
                 return NextResponse.json<ApiResponse>({
                     success: true,
                     data: updatedTicket,
-                    warning: 'Тикет завершен, но не удалось отправить сертификат на email'
+                    message: `Сумка подтверждена как подлинная. PDF сертификат отправлен на email ${updatedTicket.clientEmail}`
+                })
+
+            } catch (emailError) {
+                console.error('❌ Ошибка отправки PDF сертификата:', emailError)
+
+                return NextResponse.json<ApiResponse>({
+                    success: true,
+                    data: updatedTicket,
+                    warning: 'Тикет завершен, но не удалось отправить PDF сертификат на email'
                 })
             }
         }
@@ -95,21 +91,23 @@ export async function POST(
             try {
                 console.log('❌ Сценарий 2: Сумка подделка - отправляем уведомление')
 
-                // Отправляем email с уведомлением о подделке (БЕЗ сертификата)
+                // Отправляем уведомление о подделке (БЕЗ сертификата)
                 await EmailService.sendFakeNotification({
                     ticketId: updatedTicket.id,
                     clientEmail: updatedTicket.clientEmail,
                     comment: comment || 'К сожалению, наши эксперты определили, что товар является подделкой.',
-                    brandName: 'Designer Bag',
-                    itemType: 'Сумка',
+                    brandName: brandName || 'Designer Bag',
+                    itemType: itemType || 'Сумка',
                     checkDate: updatedTicket.updatedAt,
                     expertName: expertName || 'BagCheck Expert'
                 })
 
+                console.log('✅ Уведомление о подделке отправлено на email:', updatedTicket.clientEmail)
+
                 return NextResponse.json<ApiResponse>({
                     success: true,
                     data: updatedTicket,
-                    message: 'Товар определен как подделка. Уведомление отправлено на email.'
+                    message: `Товар определен как подделка. Уведомление отправлено на email ${updatedTicket.clientEmail}`
                 })
 
             } catch (emailError) {
@@ -130,77 +128,6 @@ export async function POST(
             success: false,
             error: 'Ошибка завершения тикета',
             details: error instanceof Error ? error.message : 'Неизвестная ошибка'
-        }, { status: 500 })
-    }
-}
-
-// src/app/api/tickets/[id]/request-photos/route.ts - Сценарий 3: Запрос дополнительных фото
-export async function POST(
-    request: NextRequest,
-    context: RouteContext
-) {
-    try {
-        const { id } = await context.params
-        const { description } = await request.json()
-
-        if (!description || description.trim().length === 0) {
-            return NextResponse.json<ApiResponse>({
-                success: false,
-                error: 'Необходимо указать описание запроса'
-            }, { status: 400 })
-        }
-
-        // Получаем тикет
-        const ticket = await TicketService.findById(id)
-        if (!ticket) {
-            return NextResponse.json<ApiResponse>({
-                success: false,
-                error: 'Тикет не найден'
-            }, { status: 404 })
-        }
-
-        console.log(`📸 Сценарий 3: Запрашиваем дополнительные фото для тикета ${id}`)
-
-        // Создаем запрос на дополнительные фото
-        const photoRequest = await TicketService.createPhotoRequest(id, description.trim())
-
-        // Отправляем email с запросом дополнительных фото
-        try {
-            await EmailService.sendPhotoRequest({
-                ticketId: ticket.id,
-                clientEmail: ticket.clientEmail,
-                description: description.trim(),
-                uploadUrl: `${process.env.NEXT_PUBLIC_APP_URL}/upload/additional/${ticket.id}`
-            })
-
-            return NextResponse.json<ApiResponse>({
-                success: true,
-                data: {
-                    ticket: {
-                        ...ticket,
-                        status: 'NEEDS_MORE_PHOTOS'
-                    },
-                    photoRequest
-                },
-                message: 'Запрос на дополнительные фото отправлен клиенту'
-            })
-
-        } catch (emailError) {
-            console.error('❌ Ошибка отправки запроса фото:', emailError)
-
-            return NextResponse.json<ApiResponse>({
-                success: true,
-                data: { ticket, photoRequest },
-                warning: 'Запрос создан, но не удалось отправить email'
-            })
-        }
-
-    } catch (error) {
-        console.error('❌ Ошибка создания запроса фото:', error)
-
-        return NextResponse.json<ApiResponse>({
-            success: false,
-            error: 'Ошибка создания запроса'
         }, { status: 500 })
     }
 }

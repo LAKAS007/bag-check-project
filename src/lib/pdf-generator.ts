@@ -1,6 +1,6 @@
-// src/lib/pdf-generator.ts
-// Используем только встроенные возможности Node.js
+// src/lib/pdf-generator.ts - Правильная версия с Puppeteer
 import QRCode from 'qrcode'
+import puppeteer from 'puppeteer'
 
 export interface CertificateData {
     ticketId: string
@@ -16,6 +16,8 @@ export interface CertificateData {
 
 export class PDFCertificateGenerator {
     static async generateCertificate(data: CertificateData): Promise<Buffer> {
+        let browser: puppeteer.Browser | null = null
+
         try {
             console.log('🔄 Генерируем PDF сертификат для заявки:', data.ticketId)
 
@@ -28,6 +30,7 @@ export class PDFCertificateGenerator {
                     margin: 1,
                     color: { dark: '#000000', light: '#FFFFFF' }
                 })
+                console.log('✅ QR код сгенерирован')
             } catch (error) {
                 console.warn('⚠️ Не удалось сгенерировать QR код:', error)
             }
@@ -35,92 +38,110 @@ export class PDFCertificateGenerator {
             // Создаем HTML контент
             const htmlContent = this.generateHTML(data, qrCodeImage)
 
-            // Возвращаем HTML как "PDF" (временное решение для тестирования)
-            // В реальности здесь будет использоваться Puppeteer или другая библиотека
-            const htmlBuffer = Buffer.from(htmlContent, 'utf-8')
+            // Запускаем Puppeteer
+            browser = await puppeteer.launch({
+                headless: true,
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-web-security',
+                    '--disable-gpu'
+                ]
+            })
 
-            console.log('✅ HTML сертификат сгенерирован, размер:', htmlBuffer.length, 'байт')
+            const page = await browser.newPage()
 
-            return htmlBuffer
+            // Устанавливаем содержимое страницы
+            await page.setContent(htmlContent, {
+                waitUntil: 'networkidle0'
+            })
+
+            // Генерируем PDF
+            const pdfBuffer = await page.pdf({
+                format: 'A4',
+                printBackground: true,
+                margin: {
+                    top: '20mm',
+                    right: '20mm',
+                    bottom: '20mm',
+                    left: '20mm'
+                }
+            })
+
+            console.log('✅ PDF сертификат сгенерирован, размер:', pdfBuffer.length, 'байт')
+
+            return pdfBuffer
 
         } catch (error) {
-            console.error('❌ Ошибка генерации сертификата:', error)
-            throw new Error('Не удалось создать сертификат')
+            console.error('❌ Ошибка генерации PDF сертификата:', error)
+            throw new Error('Не удалось создать PDF сертификат')
+        } finally {
+            // Закрываем браузер
+            if (browser) {
+                await browser.close()
+            }
         }
     }
 
     private static generateHTML(data: CertificateData, qrCodeImage: string): string {
         const resultColor = data.result === 'AUTHENTIC' ? '#059669' : '#dc2626'
-        const resultText = data.result === 'AUTHENTIC' ? '✓ ПОДЛИННАЯ' : '✗ ПОДДЕЛКА'
+        const resultBgColor = data.result === 'AUTHENTIC' ? '#f0fdf4' : '#fef2f2'
+        const resultText = data.result === 'AUTHENTIC' ? 'ПОДЛИННАЯ' : 'ПОДДЕЛКА'
 
         return `
         <!DOCTYPE html>
-        <html lang="ru">
+        <html>
         <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Сертификат подлинности - ${data.ticketId}</title>
+            <meta charset="utf-8">
+            <title>Сертификат ${data.ticketId}</title>
             <style>
-                * {
+                @page {
+                    size: A4;
                     margin: 0;
-                    padding: 0;
+                }
+                
+                * {
                     box-sizing: border-box;
                 }
                 
                 body {
-                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+                    margin: 0;
+                    padding: 20mm;
                     color: #334155;
-                    line-height: 1.6;
-                    background: #ffffff;
-                    padding: 40px;
+                    line-height: 1.5;
+                    background: white;
+                    font-size: 14px;
                 }
                 
                 .certificate {
-                    max-width: 800px;
-                    margin: 0 auto;
-                    background: white;
-                    border: 3px solid #1e40af;
-                    border-radius: 15px;
-                    padding: 40px;
-                    box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+                    width: 100%;
+                    height: 100%;
+                    display: flex;
+                    flex-direction: column;
                 }
                 
                 .header {
                     text-align: center;
                     margin-bottom: 40px;
+                    border-bottom: 3px solid #2563eb;
                     padding-bottom: 20px;
-                    border-bottom: 2px solid #e2e8f0;
                 }
                 
-                .logo {
+                .title {
                     font-size: 32px;
-                    color: #1e40af;
                     font-weight: bold;
-                    margin-bottom: 10px;
+                    color: #1e293b;
+                    margin: 0 0 15px 0;
+                    letter-spacing: 3px;
                 }
                 
-                .company-name {
-                    font-size: 24px;
-                    color: #1e40af;
-                    font-weight: bold;
-                    margin-bottom: 8px;
-                }
-                
-                .company-subtitle {
-                    font-size: 14px;
+                .subtitle {
+                    font-size: 18px;
                     color: #64748b;
-                }
-                
-                .certificate-title {
-                    text-align: center;
-                    margin-bottom: 40px;
-                }
-                
-                .title-main {
-                    font-size: 36px;
-                    color: #1e40af;
-                    font-weight: bold;
-                    margin-bottom: 15px;
+                    margin: 0 0 20px 0;
+                    text-transform: uppercase;
                     letter-spacing: 2px;
                 }
                 
@@ -128,15 +149,17 @@ export class PDFCertificateGenerator {
                     font-size: 16px;
                     color: #64748b;
                     background: #f8fafc;
-                    padding: 10px 20px;
+                    padding: 12px 25px;
                     border-radius: 25px;
                     display: inline-block;
+                    border: 1px solid #e2e8f0;
                 }
                 
                 .main-content {
                     display: flex;
                     gap: 40px;
                     margin-bottom: 40px;
+                    flex: 1;
                 }
                 
                 .content-left {
@@ -145,101 +168,141 @@ export class PDFCertificateGenerator {
                 
                 .qr-section {
                     text-align: center;
-                    min-width: 120px;
+                    min-width: 160px;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
                 }
                 
                 .result-section {
                     text-align: center;
-                    margin-bottom: 40px;
-                    padding: 20px;
-                    background: ${data.result === 'AUTHENTIC' ? '#f0fdf4' : '#fef2f2'};
-                    border-radius: 12px;
-                    border: 2px solid ${resultColor};
+                    margin-bottom: 35px;
+                    padding: 25px;
+                    background: ${resultBgColor};
+                    border-radius: 15px;
+                    border: 3px solid ${resultColor};
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
                 }
                 
                 .result-text {
-                    font-size: 32px;
+                    font-size: 28px;
                     font-weight: bold;
                     color: ${resultColor};
+                    margin: 0;
+                    letter-spacing: 2px;
                 }
                 
                 .details-section {
                     background: #f8fafc;
                     padding: 30px;
-                    border-radius: 12px;
-                    margin-bottom: 30px;
+                    border-radius: 15px;
+                    margin-bottom: 25px;
+                    border: 1px solid #e2e8f0;
+                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
                 }
                 
                 .detail-row {
                     display: flex;
                     justify-content: space-between;
+                    align-items: center;
                     margin-bottom: 15px;
-                    padding-bottom: 15px;
+                    padding-bottom: 12px;
                     border-bottom: 1px solid #e2e8f0;
+                }
+                
+                .detail-row:last-child {
+                    border-bottom: none;
+                    margin-bottom: 0;
                 }
                 
                 .detail-label {
                     font-weight: 600;
                     color: #64748b;
                     min-width: 150px;
+                    font-size: 14px;
                 }
                 
                 .detail-value {
                     color: #334155;
+                    flex: 1;
+                    text-align: right;
                     font-weight: 500;
+                    font-size: 14px;
                 }
                 
                 .comment-section {
                     background: #fffbeb;
-                    padding: 20px;
-                    border-radius: 12px;
-                    border-left: 4px solid #f59e0b;
+                    padding: 25px;
+                    border-radius: 15px;
+                    border-left: 5px solid #f59e0b;
+                    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
                 }
                 
                 .comment-label {
                     font-weight: 600;
                     color: #92400e;
-                    margin-bottom: 10px;
+                    margin-bottom: 12px;
+                    font-size: 15px;
                 }
                 
                 .comment-text {
                     color: #451a03;
-                    line-height: 1.8;
+                    line-height: 1.7;
+                    margin: 0;
+                    font-size: 13px;
                 }
                 
                 .qr-code {
-                    width: 100px;
-                    height: 100px;
-                    margin-bottom: 10px;
-                    border-radius: 8px;
+                    width: 130px;
+                    height: 130px;
+                    margin-bottom: 15px;
+                    border-radius: 10px;
+                    border: 2px solid #e2e8f0;
+                    padding: 5px;
+                    background: white;
                 }
                 
                 .qr-label {
-                    font-size: 12px;
+                    font-size: 13px;
                     color: #64748b;
+                    margin: 0;
                     font-weight: 500;
+                    text-align: center;
                 }
                 
                 .footer {
-                    text-align: center;
-                    padding-top: 30px;
+                    margin-top: auto;
+                    padding-top: 25px;
                     border-top: 2px solid #e2e8f0;
-                    color: #64748b;
+                    text-align: center;
+                }
+                
+                .footer-text {
                     font-size: 12px;
+                    color: #64748b;
+                    line-height: 1.6;
+                    margin-bottom: 10px;
                 }
                 
                 .generation-date {
-                    margin-top: 15px;
-                    font-size: 10px;
+                    font-size: 11px;
                     color: #94a3b8;
+                    font-style: italic;
                 }
                 
-                @media print {
-                    body { padding: 0; }
-                    .certificate { 
-                        box-shadow: none; 
-                        border: 2px solid #000;
-                    }
+                .qr-placeholder {
+                    width: 130px;
+                    height: 130px;
+                    border: 2px dashed #cbd5e1;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: 11px;
+                    color: #64748b;
+                    text-align: center;
+                    border-radius: 10px;
+                    background: #f8fafc;
+                    margin-bottom: 15px;
                 }
             </style>
         </head>
@@ -247,55 +310,57 @@ export class PDFCertificateGenerator {
             <div class="certificate">
                 <!-- Header -->
                 <div class="header">
-                    <div class="logo">🛡️</div>
-                    <div class="company-name">BagCheck</div>
-                    <div class="company-subtitle">Профессиональная аутентификация дизайнерских сумок</div>
-                </div>
-                
-                <!-- Certificate Title -->
-                <div class="certificate-title">
-                    <div class="title-main">СЕРТИФИКАТ ПОДЛИННОСТИ</div>
-                    <div class="certificate-number">Номер сертификата: ${data.ticketId}</div>
-                </div>
-                
-                <!-- Result -->
-                <div class="result-section">
-                    <div class="result-text">${resultText}</div>
+                    <h1 class="title">СЕРТИФИКАТ АУТЕНТИФИКАЦИИ</h1>
+                    <p class="subtitle">BagCheck Professional Service</p>
+                    <div class="certificate-number">
+                        Сертификат № ${data.ticketId}
+                    </div>
                 </div>
                 
                 <!-- Main Content -->
                 <div class="main-content">
                     <div class="content-left">
+                        <!-- Result -->
+                        <div class="result-section">
+                            <div class="result-text">${resultText}</div>
+                        </div>
+                        
                         <!-- Details -->
                         <div class="details-section">
+                            ${data.brandName ? `
                             <div class="detail-row">
-                                <div class="detail-label">Тип товара:</div>
-                                <div class="detail-value">${data.itemType || 'Дизайнерская сумка'}</div>
+                                <span class="detail-label">Бренд:</span>
+                                <span class="detail-value">${data.brandName}</span>
+                            </div>
+                            ` : ''}
+                            ${data.itemType ? `
+                            <div class="detail-row">
+                                <span class="detail-label">Изделие:</span>
+                                <span class="detail-value">${data.itemType}</span>
+                            </div>
+                            ` : ''}
+                            <div class="detail-row">
+                                <span class="detail-label">Дата проверки:</span>
+                                <span class="detail-value">${this.formatDate(data.checkDate)}</span>
                             </div>
                             <div class="detail-row">
-                                <div class="detail-label">Бренд:</div>
-                                <div class="detail-value">${data.brandName || 'Не указан'}</div>
+                                <span class="detail-label">Заявка:</span>
+                                <span class="detail-value">${data.ticketId}</span>
                             </div>
+                            ${data.expertName ? `
                             <div class="detail-row">
-                                <div class="detail-label">Email клиента:</div>
-                                <div class="detail-value">${data.clientEmail}</div>
+                                <span class="detail-label">Эксперт:</span>
+                                <span class="detail-value">${data.expertName}</span>
                             </div>
-                            <div class="detail-row">
-                                <div class="detail-label">Дата проверки:</div>
-                                <div class="detail-value">${this.formatDate(data.checkDate)}</div>
-                            </div>
-                            <div class="detail-row" style="border-bottom: none; margin-bottom: 0; padding-bottom: 0;">
-                                <div class="detail-label">Эксперт:</div>
-                                <div class="detail-value">${data.expertName || 'BagCheck Expert Team'}</div>
-                            </div>
+                            ` : ''}
                         </div>
                         
                         <!-- Comment -->
                         ${data.comment ? `
-                            <div class="comment-section">
-                                <div class="comment-label">Комментарий эксперта:</div>
-                                <div class="comment-text">${data.comment}</div>
-                            </div>
+                        <div class="comment-section">
+                            <div class="comment-label">Комментарий эксперта:</div>
+                            <p class="comment-text">${data.comment}</p>
+                        </div>
                         ` : ''}
                     </div>
                     
@@ -304,20 +369,22 @@ export class PDFCertificateGenerator {
                         ${qrCodeImage ? `
                             <img src="${qrCodeImage}" alt="QR Code" class="qr-code">
                         ` : `
-                            <div style="width: 100px; height: 100px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666; text-align: center; border-radius: 8px; margin-bottom: 10px;">
+                            <div class="qr-placeholder">
                                 QR код<br>${data.qrCode.slice(0, 8)}
                             </div>
                         `}
-                        <div class="qr-label">
+                        <p class="qr-label">
                             Сканируйте для<br>верификации
-                        </div>
+                        </p>
                     </div>
                 </div>
                 
                 <!-- Footer -->
                 <div class="footer">
-                    Этот сертификат выдан компанией BagCheck - сервисом профессиональной аутентификации.<br>
-                    Для верификации подлинности сертификата отсканируйте QR код или посетите наш сайт.
+                    <div class="footer-text">
+                        Этот сертификат выдан компанией BagCheck - сервисом профессиональной аутентификации.<br>
+                        Для верификации подлинности сертификата отсканируйте QR код или посетите наш сайт.
+                    </div>
                     <div class="generation-date">
                         Сертификат сгенерирован: ${this.formatDate(new Date())}
                     </div>
