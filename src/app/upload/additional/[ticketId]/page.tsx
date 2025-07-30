@@ -1,8 +1,8 @@
-// src/app/upload/additional/[ticketId]/page.tsx - Страница загрузки дополнительных фото
+// src/app/upload/additional/[ticketId]/page.tsx - ИСПРАВЛЕННАЯ ВЕРСИЯ
 'use client'
 
 import React, { useState, useRef, useEffect } from 'react'
-import { Shield, Upload, X, Check, AlertCircle, ArrowLeft, Camera, FileImage, Info } from 'lucide-react'
+import { Shield, Upload, X, Check, AlertCircle, ArrowLeft, Camera, FileImage, Info, Loader2 } from 'lucide-react'
 import Link from 'next/link'
 
 interface UploadedFile {
@@ -15,7 +15,7 @@ interface TicketInfo {
     id: string
     clientEmail: string
     status: string
-    photoRequests: Array<{
+    requests: Array<{
         id: string
         description: string
         status: string
@@ -44,12 +44,16 @@ export default function AdditionalPhotosPage({ params }: { params: Promise<{ tic
     const loadTicketInfo = async (id: string) => {
         try {
             setIsLoading(true)
+            console.log('📋 Загружаем информацию о тикете:', id)
+
             const response = await fetch(`/api/tickets/${id}`)
             const data = await response.json()
 
             if (!response.ok) {
                 throw new Error(data.error || 'Тикет не найден')
             }
+
+            console.log('📄 Данные тикета:', data.data)
 
             if (data.data.status !== 'NEEDS_MORE_PHOTOS') {
                 setError('Этот тикет не ожидает дополнительных фотографий')
@@ -61,7 +65,7 @@ export default function AdditionalPhotosPage({ params }: { params: Promise<{ tic
             setUploadStep('upload')
 
         } catch (error) {
-            console.error('Ошибка загрузки тикета:', error)
+            console.error('❌ Ошибка загрузки тикета:', error)
             setError(error instanceof Error ? error.message : 'Не удалось загрузить информацию о тикете')
             setUploadStep('error')
         } finally {
@@ -102,7 +106,17 @@ export default function AdditionalPhotosPage({ params }: { params: Promise<{ tic
             return
         }
 
+        if (files.length + imageFiles.length > 10) {
+            alert('Максимум 10 файлов')
+            return
+        }
+
         imageFiles.forEach(file => {
+            if (file.size > 5 * 1024 * 1024) { // 5MB
+                alert(`Файл ${file.name} слишком большой. Максимум 5MB.`)
+                return
+            }
+
             const reader = new FileReader()
             reader.onload = (e) => {
                 const newFile: UploadedFile = {
@@ -139,6 +153,7 @@ export default function AdditionalPhotosPage({ params }: { params: Promise<{ tic
 
             console.log('🚀 Отправляем дополнительные фото для тикета:', ticketId)
 
+            // ИСПРАВЛЕНО: Используем правильный endpoint
             const response = await fetch(`/api/tickets/${ticketId}/additional-photos`, {
                 method: 'POST',
                 body: formData,
@@ -161,18 +176,11 @@ export default function AdditionalPhotosPage({ params }: { params: Promise<{ tic
         }
     }
 
-    const formatFileSize = (bytes: number) => {
-        if (bytes === 0) return '0 Bytes'
-        const k = 1024
-        const sizes = ['Bytes', 'KB', 'MB']
-        const i = Math.floor(Math.log(bytes) / Math.log(k))
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-    }
-
     const formatDate = (dateString: string) => {
-        return new Date(dateString).toLocaleDateString('ru-RU', {
-            day: 'numeric',
-            month: 'long',
+        return new Date(dateString).toLocaleString('ru-RU', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
             hour: '2-digit',
             minute: '2-digit'
         })
@@ -182,8 +190,8 @@ export default function AdditionalPhotosPage({ params }: { params: Promise<{ tic
         return (
             <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                    <p className="text-slate-600">Загружаем информацию о заявке...</p>
+                    <Loader2 className="h-12 w-12 animate-spin text-blue-600 mx-auto mb-4" />
+                    <p className="text-slate-600">Загрузка информации о заявке...</p>
                 </div>
             </div>
         )
@@ -191,29 +199,18 @@ export default function AdditionalPhotosPage({ params }: { params: Promise<{ tic
 
     if (uploadStep === 'error') {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-                <header className="border-b border-slate-200 bg-white/80 backdrop-blur-md">
-                    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                        <div className="flex justify-between items-center h-16">
-                            <Link href="/" className="flex items-center space-x-2">
-                                <Shield className="h-8 w-8 text-blue-600" />
-                                <span className="text-xl font-bold text-slate-900">BagCheck</span>
-                            </Link>
-                        </div>
-                    </div>
-                </header>
-
-                <div className="max-w-2xl mx-auto px-4 py-20">
-                    <div className="text-center">
-                        <div className="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-6">
-                            <AlertCircle className="h-8 w-8 text-red-600" />
-                        </div>
-                        <h1 className="text-3xl font-bold text-slate-900 mb-4">Ошибка</h1>
-                        <p className="text-lg text-slate-600 mb-8">{error}</p>
-                        <Link href="/" className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors">
-                            На главную
-                        </Link>
-                    </div>
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
+                <div className="text-center max-w-md mx-auto p-6">
+                    <AlertCircle className="h-16 w-16 text-red-500 mx-auto mb-4" />
+                    <h1 className="text-2xl font-bold text-slate-900 mb-4">Ошибка</h1>
+                    <p className="text-slate-600 mb-6">{error}</p>
+                    <Link
+                        href="/"
+                        className="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                        <ArrowLeft className="h-4 w-4 mr-2" />
+                        На главную
+                    </Link>
                 </div>
             </div>
         )
@@ -221,37 +218,20 @@ export default function AdditionalPhotosPage({ params }: { params: Promise<{ tic
 
     if (uploadStep === 'success') {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-                <header className="border-b border-slate-200 bg-white/80 backdrop-blur-md">
-                    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                        <div className="flex justify-between items-center h-16">
-                            <Link href="/" className="flex items-center space-x-2">
-                                <Shield className="h-8 w-8 text-blue-600" />
-                                <span className="text-xl font-bold text-slate-900">BagCheck</span>
-                            </Link>
-                        </div>
-                    </div>
-                </header>
-
-                <div className="max-w-2xl mx-auto px-4 py-20">
-                    <div className="text-center">
-                        <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-6">
-                            <Check className="h-8 w-8 text-green-600" />
-                        </div>
-                        <h1 className="text-3xl font-bold text-slate-900 mb-4">
-                            Фотографии отправлены!
-                        </h1>
-                        <p className="text-lg text-slate-600 mb-8">
-                            Спасибо! Мы получили дополнительные фотографии. Наш эксперт продолжит проверку и вы получите результат в ближайшее время.
-                        </p>
-                        <div className="bg-white rounded-2xl p-6 shadow-lg mb-8">
-                            <div className="text-sm text-slate-500 mb-2">Номер заявки</div>
-                            <div className="text-2xl font-bold text-blue-600">{ticketId}</div>
-                        </div>
-                        <Link href="/" className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors">
-                            На главную
-                        </Link>
-                    </div>
+            <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
+                <div className="text-center max-w-md mx-auto p-6">
+                    <Check className="h-16 w-16 text-green-500 mx-auto mb-4" />
+                    <h1 className="text-2xl font-bold text-slate-900 mb-4">Фотографии загружены!</h1>
+                    <p className="text-slate-600 mb-6">
+                        Ваши дополнительные фотографии успешно загружены.
+                        Эксперт продолжит проверку в ближайшее время.
+                    </p>
+                    <Link
+                        href="/"
+                        className="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                        На главную
+                    </Link>
                 </div>
             </div>
         )
@@ -260,9 +240,9 @@ export default function AdditionalPhotosPage({ params }: { params: Promise<{ tic
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
             {/* Header */}
-            <header className="border-b border-slate-200 bg-white/80 backdrop-blur-md">
+            <header className="border-b border-slate-200 bg-white/80 backdrop-blur-md sticky top-0 z-50">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="flex justify-between items-center h-16">
+                    <div className="flex items-center justify-between h-16">
                         <Link href="/" className="flex items-center space-x-2">
                             <Shield className="h-8 w-8 text-blue-600" />
                             <span className="text-xl font-bold text-slate-900">BagCheck</span>
@@ -283,17 +263,17 @@ export default function AdditionalPhotosPage({ params }: { params: Promise<{ tic
                 </div>
 
                 {/* Информация о запросе */}
-                {ticketInfo && ticketInfo.photoRequests.length > 0 && (
+                {ticketInfo && ticketInfo.requests.length > 0 && (
                     <div className="bg-blue-50 border border-blue-200 rounded-xl p-6 mb-8">
                         <div className="flex items-start space-x-3">
                             <Info className="h-6 w-6 text-blue-600 mt-0.5" />
                             <div className="flex-1">
                                 <h3 className="font-semibold text-blue-900 mb-2">Что нужно сфотографировать:</h3>
                                 <p className="text-blue-800 mb-4">
-                                    {ticketInfo.photoRequests[ticketInfo.photoRequests.length - 1].description}
+                                    {ticketInfo.requests[ticketInfo.requests.length - 1].description}
                                 </p>
                                 <div className="text-sm text-blue-600">
-                                    Запрос от {formatDate(ticketInfo.photoRequests[ticketInfo.photoRequests.length - 1].createdAt)}
+                                    Запрос от {formatDate(ticketInfo.requests[ticketInfo.requests.length - 1].createdAt)}
                                 </div>
                             </div>
                         </div>
@@ -345,93 +325,59 @@ export default function AdditionalPhotosPage({ params }: { params: Promise<{ tic
                         </p>
                     </div>
 
-                    {/* Uploaded Files */}
+                    {/* Превью загруженных файлов */}
                     {files.length > 0 && (
                         <div className="mt-8">
-                            <h4 className="font-semibold text-slate-900 mb-4">
+                            <h4 className="text-lg font-semibold text-slate-900 mb-4">
                                 Выбранные файлы ({files.length})
                             </h4>
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                                 {files.map((file) => (
                                     <div key={file.id} className="relative group">
                                         <div className="aspect-square bg-slate-100 rounded-lg overflow-hidden">
                                             <img
                                                 src={file.preview}
-                                                alt="Preview"
+                                                alt={file.file.name}
                                                 className="w-full h-full object-cover"
                                             />
                                         </div>
                                         <button
                                             onClick={() => removeFile(file.id)}
-                                            className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
+                                            className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
                                         >
                                             <X className="h-4 w-4" />
                                         </button>
-                                        <div className="mt-2">
-                                            <div className="text-sm font-medium text-slate-900 truncate">
-                                                {file.file.name}
-                                            </div>
-                                            <div className="text-xs text-slate-500">
-                                                {formatFileSize(file.file.size)}
-                                            </div>
-                                        </div>
+                                        <p className="text-xs text-slate-500 mt-1 truncate">
+                                            {file.file.name}
+                                        </p>
                                     </div>
                                 ))}
                             </div>
-
-                            <div className="mt-8 flex flex-col sm:flex-row gap-4">
-                                <button
-                                    onClick={handleSubmit}
-                                    disabled={isUploading}
-                                    className="flex-1 bg-blue-600 text-white px-8 py-4 rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-semibold flex items-center justify-center space-x-2"
-                                >
-                                    {isUploading ? (
-                                        <>
-                                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                                            <span>Загружаем...</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Upload className="h-5 w-5" />
-                                            <span>Отправить фотографии</span>
-                                        </>
-                                    )}
-                                </button>
-                                <button
-                                    onClick={() => setFiles([])}
-                                    className="border-2 border-slate-300 text-slate-700 px-8 py-4 rounded-xl hover:border-red-500 hover:text-red-600 transition-colors"
-                                >
-                                    Очистить все
-                                </button>
-                            </div>
                         </div>
                     )}
-                </div>
 
-                {/* Tips */}
-                <div className="bg-slate-50 rounded-xl p-6">
-                    <h4 className="font-semibold text-slate-900 mb-4 flex items-center space-x-2">
-                        <FileImage className="h-5 w-5 text-slate-600" />
-                        <span>Советы для качественных фотографий</span>
-                    </h4>
-                    <ul className="space-y-2 text-slate-600">
-                        <li className="flex items-start space-x-2">
-                            <span className="text-blue-600 mt-1">•</span>
-                            <span>Используйте хорошее естественное или яркое искусственное освещение</span>
-                        </li>
-                        <li className="flex items-start space-x-2">
-                            <span className="text-blue-600 mt-1">•</span>
-                            <span>Держите камеру устойчиво, избегайте размытых снимков</span>
-                        </li>
-                        <li className="flex items-start space-x-2">
-                            <span className="text-blue-600 mt-1">•</span>
-                            <span>Фотографируйте именно те элементы, которые указал эксперт</span>
-                        </li>
-                        <li className="flex items-start space-x-2">
-                            <span className="text-blue-600 mt-1">•</span>
-                            <span>При необходимости сделайте несколько ракурсов одного элемента</span>
-                        </li>
-                    </ul>
+                    {/* Кнопка отправки */}
+                    {files.length > 0 && (
+                        <div className="mt-8 text-center">
+                            <button
+                                onClick={handleSubmit}
+                                disabled={isUploading}
+                                className="bg-green-600 text-white px-8 py-3 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium inline-flex items-center space-x-2"
+                            >
+                                {isUploading ? (
+                                    <>
+                                        <Loader2 className="h-5 w-5 animate-spin" />
+                                        <span>Загрузка...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Check className="h-5 w-5" />
+                                        <span>Отправить фотографии</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
