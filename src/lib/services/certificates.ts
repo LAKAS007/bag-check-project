@@ -6,7 +6,7 @@ export class CertificateService {
     // Создание сертификата (только для сохранения QR кода в БД)
     static async create(ticketId: string, pdfUrl: string = 'not_stored') {
         // Генерируем уникальный QR код
-        const qrCode = `CERT-${ticketId}-${nanoid(8)}`
+        const qrCode = ticketId
 
         console.log('🔗 Создаем запись сертификата с QR кодом:', qrCode)
 
